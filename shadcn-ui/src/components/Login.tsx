@@ -29,11 +29,16 @@ const Login: React.FC = () => {
     }
   };
 
+  const fillAdminCredentials = () => {
+    setEmail('admin@super.com');
+    setPassword('Asdf1234');
+  };
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-1">
-          <CardTitle className="text-2xl font-bold text-center">Minisúper Familiar</CardTitle>
+          <CardTitle className="text-2xl font-bold text-center">Super Gestión</CardTitle>
           <CardDescription className="text-center">
             Sistema de Gestión de Empleados
           </CardDescription>
@@ -82,12 +87,20 @@ const Login: React.FC = () => {
             </Button>
           </form>
           
-          <div className="mt-6 text-sm text-gray-600">
-            <p className="font-semibold">Usuarios de prueba:</p>
-            <p>Admin: byron@minisuper.com / admin123</p>
-            <p>Admin: dayana@minisuper.com / admin123</p>
-            <p>Empleado: deylin@minisuper.com / emp123</p>
-            <p>Refuerzo: anais@minisuper.com / ref123</p>
+          <div className="mt-6 p-4 bg-green-50 border border-green-200 rounded-lg">
+            <p className="font-semibold text-green-800 mb-2">Credenciales de Administrador:</p>
+            <p className="text-green-700 text-sm mb-2">
+              📧 Email: admin@super.com<br />
+              🔑 Password: Asdf1234
+            </p>
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={fillAdminCredentials}
+              className="w-full bg-green-100 hover:bg-green-200 text-green-800 border-green-300"
+            >
+              Usar credenciales de admin
+            </Button>
           </div>
         </CardContent>
       </Card>
