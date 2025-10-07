@@ -11,12 +11,24 @@ import { Plus, Check, X, Calendar, Plane } from 'lucide-react';
 import { Employee, Vacation } from '@/types';
 import { format, differenceInDays } from 'date-fns';
 import { es } from 'date-fns/locale';
+import { 
+  collection, 
+  addDoc, 
+  getDocs, 
+  updateDoc, 
+  doc, 
+  query, 
+  where,
+  orderBy 
+} from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 
 const Vacations: React.FC = () => {
   const { currentUser } = useAuth();
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [vacations, setVacations] = useState<Vacation[]>([]);
   const [showRequestForm, setShowRequestForm] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [requestData, setRequestData] = useState({
     startDate: '',
     endDate: '',
@@ -24,89 +36,37 @@ const Vacations: React.FC = () => {
   });
 
   useEffect(() => {
-    // Datos ficticios de empleados
-    const mockEmployees: Employee[] = [
-      {
-        id: '1',
-        name: 'Byron Administrador',
-        role: 'empleado',
-        color: '#3B82F6',
-        startDate: '2022-01-01',
-        hourlyRate: 3000,
-        status: 'activo',
-        email: 'byron@minisuper.com'
-      },
-      {
-        id: '2',
-        name: 'Dayana Administradora',
-        role: 'empleado',
-        color: '#EF4444',
-        startDate: '2022-01-01',
-        hourlyRate: 3000,
-        status: 'activo',
-        email: 'dayana@minisuper.com'
-      },
-      {
-        id: '3',
-        name: 'Deylin Rodríguez',
-        role: 'empleado',
-        color: '#10B981',
-        startDate: '2023-01-15',
-        hourlyRate: 2500,
-        status: 'activo',
-        email: 'deylin@minisuper.com'
-      },
-      {
-        id: '4',
-        name: 'Anais López',
-        role: 'refuerzo',
-        color: '#F59E0B',
-        startDate: '2023-07-01',
-        hourlyRate: 2000,
-        status: 'activo',
-        email: 'anais@minisuper.com'
-      }
-    ];
-
-    // Vacaciones ficticias
-    const mockVacations: Vacation[] = [
-      {
-        id: '1',
-        employeeId: '3',
-        startDate: '2024-12-15',
-        endDate: '2024-12-20',
-        days: 5,
-        status: 'pendiente',
-        requestDate: '2024-10-01',
-        reason: 'Vacaciones familiares de fin de año'
-      },
-      {
-        id: '2',
-        employeeId: '4',
-        startDate: '2024-11-10',
-        endDate: '2024-11-12',
-        days: 3,
-        status: 'aprobada',
-        requestDate: '2024-09-15',
-        approvedBy: 'Byron Administrador',
-        reason: 'Asuntos personales'
-      },
-      {
-        id: '3',
-        employeeId: '3',
-        startDate: '2024-08-05',
-        endDate: '2024-08-10',
-        days: 5,
-        status: 'aprobada',
-        requestDate: '2024-07-01',
-        approvedBy: 'Dayana Administradora',
-        reason: 'Vacaciones de verano'
-      }
-    ];
-
-    setEmployees(mockEmployees);
-    setVacations(mockVacations);
+    loadData();
   }, []);
+
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      
+      // Cargar empleados
+      const employeesSnapshot = await getDocs(collection(db, 'employees'));
+      const employeesData = employeesSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as Employee[];
+      setEmployees(employeesData);
+
+      // Cargar vacaciones
+      const vacationsSnapshot = await getDocs(
+        query(collection(db, 'vacations'), orderBy('requestDate', 'desc'))
+      );
+      const vacationsData = vacationsSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as Vacation[];
+      setVacations(vacationsData);
+      
+    } catch (error) {
+      console.error('Error loading data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const calculateAvailableVacationDays = (employeeId: string): number => {
     const employee = employees.find(emp => emp.id === employeeId);
@@ -124,7 +84,7 @@ const Vacations: React.FC = () => {
     return Math.max(0, totalAvailable - usedDays);
   };
 
-  const handleRequestVacation = () => {
+  const handleRequestVacation = async () => {
     if (!requestData.startDate || !requestData.endDate) {
       alert('Por favor selecciona las fechas de vacaciones');
       return;
@@ -134,7 +94,12 @@ const Vacations: React.FC = () => {
     const endDate = new Date(requestData.endDate);
     const days = differenceInDays(endDate, startDate) + 1;
 
-    const currentEmployeeId = currentUser?.employeeId || '3'; // Default para demo
+    const currentEmployeeId = currentUser?.employeeId || currentUser?.uid;
+    if (!currentEmployeeId) {
+      alert('Error: No se pudo identificar el empleado');
+      return;
+    }
+
     const availableDays = calculateAvailableVacationDays(currentEmployeeId);
 
     if (days > availableDays) {
@@ -142,36 +107,64 @@ const Vacations: React.FC = () => {
       return;
     }
 
-    const newVacation: Vacation = {
-      id: Date.now().toString(),
-      employeeId: currentEmployeeId,
-      startDate: requestData.startDate,
-      endDate: requestData.endDate,
-      days,
-      status: 'pendiente',
-      requestDate: new Date().toISOString().split('T')[0],
-      reason: requestData.reason
-    };
+    try {
+      const newVacation = {
+        employeeId: currentEmployeeId,
+        startDate: requestData.startDate,
+        endDate: requestData.endDate,
+        days,
+        status: 'pendiente' as const,
+        requestDate: new Date().toISOString().split('T')[0],
+        reason: requestData.reason || ''
+      };
 
-    setVacations([...vacations, newVacation]);
-    setShowRequestForm(false);
-    setRequestData({ startDate: '', endDate: '', reason: '' });
+      await addDoc(collection(db, 'vacations'), newVacation);
+      
+      // Recargar datos
+      await loadData();
+      
+      setShowRequestForm(false);
+      setRequestData({ startDate: '', endDate: '', reason: '' });
+      alert('Solicitud de vacaciones enviada correctamente');
+      
+    } catch (error) {
+      console.error('Error creating vacation request:', error);
+      alert('Error al enviar la solicitud');
+    }
   };
 
-  const handleApproveVacation = (vacationId: string) => {
-    setVacations(vacations.map(vacation => 
-      vacation.id === vacationId 
-        ? { ...vacation, status: 'aprobada' as const, approvedBy: currentUser?.name }
-        : vacation
-    ));
+  const handleApproveVacation = async (vacationId: string) => {
+    try {
+      const vacationRef = doc(db, 'vacations', vacationId);
+      await updateDoc(vacationRef, {
+        status: 'aprobada',
+        approvedBy: currentUser?.name || 'Admin'
+      });
+      
+      // Recargar datos
+      await loadData();
+      
+    } catch (error) {
+      console.error('Error approving vacation:', error);
+      alert('Error al aprobar la solicitud');
+    }
   };
 
-  const handleRejectVacation = (vacationId: string) => {
-    setVacations(vacations.map(vacation => 
-      vacation.id === vacationId 
-        ? { ...vacation, status: 'rechazada' as const, approvedBy: currentUser?.name }
-        : vacation
-    ));
+  const handleRejectVacation = async (vacationId: string) => {
+    try {
+      const vacationRef = doc(db, 'vacations', vacationId);
+      await updateDoc(vacationRef, {
+        status: 'rechazada',
+        approvedBy: currentUser?.name || 'Admin'
+      });
+      
+      // Recargar datos
+      await loadData();
+      
+    } catch (error) {
+      console.error('Error rejecting vacation:', error);
+      alert('Error al rechazar la solicitud');
+    }
   };
 
   const getEmployeeName = (employeeId: string) => {
@@ -191,7 +184,17 @@ const Vacations: React.FC = () => {
 
   const filteredVacations = currentUser?.role === 'admin' 
     ? vacations 
-    : vacations.filter(v => v.employeeId === (currentUser?.employeeId || '3'));
+    : vacations.filter(v => v.employeeId === (currentUser?.employeeId || currentUser?.uid));
+
+  if (loading) {
+    return (
+      <div className="p-6">
+        <div className="flex justify-center items-center h-64">
+          <div className="text-lg">Cargando vacaciones...</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6">
@@ -224,7 +227,7 @@ const Vacations: React.FC = () => {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-green-600">
-                {calculateAvailableVacationDays(currentUser?.employeeId || '3')}
+                {calculateAvailableVacationDays(currentUser?.employeeId || currentUser?.uid || '')}
               </div>
               <p className="text-xs text-muted-foreground">días de vacaciones</p>
             </CardContent>
@@ -368,7 +371,7 @@ const Vacations: React.FC = () => {
                 </p>
                 <p className="text-sm">
                   <strong>Días disponibles:</strong> {' '}
-                  {calculateAvailableVacationDays(currentUser?.employeeId || '3')}
+                  {calculateAvailableVacationDays(currentUser?.employeeId || currentUser?.uid || '')}
                 </p>
               </div>
             )}
