@@ -2,7 +2,9 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
 import { User, Employee } from '@/types';
-import { getEmployeeById, getEmployees } from '@/services/firebaseService';
+import { getEmployeeById } from '@/services/firebaseService';
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 
 interface AuthContextType {
   user: User | null;
@@ -30,41 +32,56 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
-        // Check if it's admin
-        if (firebaseUser.email === 'admin@admin.com') {
-          setUser({
-            id: firebaseUser.uid,
-            email: firebaseUser.email,
-            role: 'admin',
-            name: 'Administrador',
-            createdAt: new Date()
-          });
-          setEmployee(null);
-        } else {
-          // It's an employee, get employee data
-          try {
+        try {
+          // First, check if user exists in users collection
+          const usersQuery = query(
+            collection(db, 'users'), 
+            where('id', '==', firebaseUser.uid)
+          );
+          const usersSnapshot = await getDocs(usersQuery);
+          
+          if (!usersSnapshot.empty) {
+            // User found in users collection
+            const userData = usersSnapshot.docs[0].data();
+            setUser({
+              id: firebaseUser.uid,
+              email: firebaseUser.email || '',
+              role: userData.role,
+              name: userData.name,
+              createdAt: userData.createdAt?.toDate() || new Date()
+            });
+            
+            // If it's an employee, also load employee data
+            if (userData.role === 'employee') {
+              const employeeData = await getEmployeeById(firebaseUser.uid);
+              setEmployee(employeeData);
+            } else {
+              setEmployee(null);
+            }
+          } else {
+            // User not found in users collection, try employees collection
             const employeeData = await getEmployeeById(firebaseUser.uid);
             if (employeeData) {
               setUser({
                 id: firebaseUser.uid,
-                email: firebaseUser.email,
+                email: firebaseUser.email || '',
                 role: 'employee',
                 name: employeeData.name,
                 createdAt: new Date()
               });
               setEmployee(employeeData);
             } else {
-              // Employee not found, logout
+              // User not found anywhere, logout
               await signOut(auth);
               setUser(null);
               setEmployee(null);
             }
-          } catch (error) {
-            console.error('Error loading employee data:', error);
-            await signOut(auth);
-            setUser(null);
-            setEmployee(null);
           }
+        } catch (error) {
+          console.error('Error loading user data:', error);
+          await signOut(auth);
+          setUser(null);
+          setEmployee(null);
         }
       } else {
         setUser(null);

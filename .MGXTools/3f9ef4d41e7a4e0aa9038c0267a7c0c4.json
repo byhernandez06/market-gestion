@@ -30,7 +30,7 @@
         },
         "02": {
             "tab_id": "02",
-            "cwd": "/workspace",
+            "cwd": "/workspace/shadcn-ui",
             "observer": {
                 "block": "Terminal",
                 "uuid": "c2eba289-f58f-469e-b013-15dae41d7f71",
@@ -41,9 +41,37 @@
                 "bash"
             ],
             "command_terminator": "\n"
+        },
+        "03": {
+            "tab_id": "03",
+            "cwd": "/workspace/shadcn-ui",
+            "observer": {
+                "block": "Terminal",
+                "uuid": "03ce5c55-133d-4d2c-af21-08e5f486c7fb",
+                "enable_llm_stream": false,
+                "callback_url": ""
+            },
+            "shell_command": [
+                "bash"
+            ],
+            "command_terminator": "\n"
+        },
+        "04": {
+            "tab_id": "04",
+            "cwd": "/workspace/shadcn-ui",
+            "observer": {
+                "block": "Terminal",
+                "uuid": "1df6a83f-1b49-4f11-9eab-d5d0509ce3ab",
+                "enable_llm_stream": false,
+                "callback_url": ""
+            },
+            "shell_command": [
+                "bash"
+            ],
+            "command_terminator": "\n"
         }
     },
-    "current_tab_id": "02",
+    "current_tab_id": "04",
     "forbidden_commands": {
         "run preview": "Use Deployer.deploy_to_public instead.",
         "serve ": "Use Deployer.deploy_to_public instead.",
