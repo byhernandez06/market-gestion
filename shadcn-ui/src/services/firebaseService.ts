@@ -1,511 +1,395 @@
 import { 
   collection, 
   addDoc, 
+  getDocs, 
+  doc, 
   updateDoc, 
   deleteDoc, 
-  doc, 
-  getDocs, 
   query, 
   where, 
   orderBy,
-  onSnapshot,
-  Timestamp,
-  getDoc,
-  setDoc 
+  Timestamp 
 } from 'firebase/firestore';
-import { createUserWithEmailAndPassword, getAuth } from 'firebase/auth';
-import { db } from '@/lib/firebase.js';
-import { Employee, Schedule, Vacation, Extra, User } from '@/types';
+import { createUserWithEmailAndPassword } from 'firebase/auth';
+import { db, auth } from '../lib/firebase';
+import { Employee, Schedule, Vacation, Extra, WeeklySchedule } from '../types';
 
-// Auth Service
-export const authService = {
-  // Create employee user account
-  async createEmployeeAccount(email: string, password: string, employeeData: Omit<Employee, 'id'>): Promise<{ uid: string; employeeId: string }> {
-    const auth = getAuth();
-    
-    try {
-      // Create Firebase Auth user
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      const uid = userCredential.user.uid;
-      
-      // Create user document in Firestore
-      const userData: User = {
-        id: uid,
-        email: email,
-        role: 'empleado',
-        name: employeeData.name,
-        createdAt: new Date().toISOString()
-      };
-      
-      await setDoc(doc(db, 'users', uid), userData);
-      
-      // Create employee document with reference to user
-      const employeeDocData = {
-        ...employeeData,
-        userId: uid,
-        createdAt: Timestamp.now()
-      };
-      
-      const employeeRef = await addDoc(collection(db, 'employees'), employeeDocData);
-      
-      return { uid, employeeId: employeeRef.id };
-    } catch (error) {
-      console.error('Error creating employee account:', error);
-      throw error;
-    }
-  },
+// Employee Services
+export const createEmployee = async (employeeData: Omit<Employee, 'id' | 'createdAt'> & { password: string }) => {
+  try {
+    // Create user account in Firebase Auth
+    const userCredential = await createUserWithEmailAndPassword(auth, employeeData.email, employeeData.password);
+    const userId = userCredential.user.uid;
 
-  // Get user by ID
-  async getUserById(uid: string): Promise<User | null> {
-    try {
-      const userDoc = await getDoc(doc(db, 'users', uid));
-      if (userDoc.exists()) {
-        return { id: userDoc.id, ...userDoc.data() } as User;
-      }
-      return null;
-    } catch (error) {
-      console.error('Error getting user:', error);
-      return null;
-    }
-  },
+    // Create employee document in Firestore
+    const { password, ...employeeWithoutPassword } = employeeData;
+    const docRef = await addDoc(collection(db, 'employees'), {
+      ...employeeWithoutPassword,
+      id: userId,
+      createdAt: Timestamp.now()
+    });
 
-  // Get employee by user ID
-  async getEmployeeByUserId(userId: string): Promise<Employee | null> {
-    try {
-      const q = query(collection(db, 'employees'), where('userId', '==', userId));
-      const querySnapshot = await getDocs(q);
-      
-      if (!querySnapshot.empty) {
-        const doc = querySnapshot.docs[0];
-        return { id: doc.id, ...doc.data() } as Employee;
-      }
-      return null;
-    } catch (error) {
-      console.error('Error getting employee by user ID:', error);
-      return null;
-    }
+    // Create user document in Firestore
+    await addDoc(collection(db, 'users'), {
+      id: userId,
+      email: employeeData.email,
+      role: 'employee',
+      name: employeeData.name,
+      createdAt: Timestamp.now()
+    });
+
+    return { id: docRef.id, ...employeeWithoutPassword, createdAt: new Date() };
+  } catch (error) {
+    console.error('Error creating employee:', error);
+    throw error;
   }
 };
 
-// Employees Service
-export const employeesService = {
-  // Get all employees
-  async getAll(): Promise<Employee[]> {
+export const getEmployees = async (): Promise<Employee[]> => {
+  try {
     const querySnapshot = await getDocs(collection(db, 'employees'));
     return querySnapshot.docs.map(doc => ({
       id: doc.id,
-      ...doc.data()
-    } as Employee));
-  },
+      ...doc.data(),
+      hireDate: doc.data().hireDate?.toDate() || new Date(),
+      createdAt: doc.data().createdAt?.toDate() || new Date()
+    })) as Employee[];
+  } catch (error) {
+    console.error('Error fetching employees:', error);
+    throw error;
+  }
+};
 
-  // Add new employee with authentication
-  async addWithAuth(employee: Omit<Employee, 'id'>, password: string): Promise<{ employeeId: string; uid: string }> {
-    return await authService.createEmployeeAccount(employee.email, password, employee);
-  },
-
-  // Add new employee (legacy method)
-  async add(employee: Omit<Employee, 'id'>): Promise<string> {
-    const docRef = await addDoc(collection(db, 'employees'), {
-      ...employee,
-      createdAt: Timestamp.now()
-    });
-    return docRef.id;
-  },
-
-  // Update employee
-  async update(id: string, employee: Partial<Employee>): Promise<void> {
+export const updateEmployee = async (id: string, employeeData: Partial<Employee>) => {
+  try {
     const employeeRef = doc(db, 'employees', id);
-    await updateDoc(employeeRef, {
-      ...employee,
-      updatedAt: Timestamp.now()
-    });
-  },
+    await updateDoc(employeeRef, employeeData);
+  } catch (error) {
+    console.error('Error updating employee:', error);
+    throw error;
+  }
+};
 
-  // Delete employee
-  async delete(id: string): Promise<void> {
+export const deleteEmployee = async (id: string) => {
+  try {
     await deleteDoc(doc(db, 'employees', id));
-  },
-
-  // Listen to employees changes
-  onSnapshot(callback: (employees: Employee[]) => void) {
-    return onSnapshot(collection(db, 'employees'), (snapshot) => {
-      const employees = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      } as Employee));
-      callback(employees);
-    });
+  } catch (error) {
+    console.error('Error deleting employee:', error);
+    throw error;
   }
 };
 
-// Schedules Service
-export const schedulesService = {
-  // Get all schedules
-  async getAll(): Promise<Schedule[]> {
-    const querySnapshot = await getDocs(
-      query(collection(db, 'schedules'), orderBy('date', 'desc'))
-    );
-    return querySnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    } as Schedule));
-  },
-
-  // Get schedules by employee
-  async getByEmployee(employeeId: string): Promise<Schedule[]> {
-    const q = query(
-      collection(db, 'schedules'),
-      where('employeeId', '==', employeeId),
-      orderBy('date', 'desc')
-    );
+export const getEmployeeById = async (id: string): Promise<Employee | null> => {
+  try {
+    const q = query(collection(db, 'employees'), where('id', '==', id));
     const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    } as Schedule));
-  },
-
-  // Get schedules by date range
-  async getByDateRange(startDate: string, endDate: string): Promise<Schedule[]> {
-    const q = query(
-      collection(db, 'schedules'),
-      where('date', '>=', startDate),
-      where('date', '<=', endDate),
-      orderBy('date', 'asc')
-    );
-    const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    } as Schedule));
-  },
-
-  // Get schedules by employee and date range
-  async getByEmployeeAndDateRange(employeeId: string, startDate: string, endDate: string): Promise<Schedule[]> {
-    const q = query(
-      collection(db, 'schedules'),
-      where('employeeId', '==', employeeId),
-      where('date', '>=', startDate),
-      where('date', '<=', endDate),
-      orderBy('date', 'asc')
-    );
-    const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    } as Schedule));
-  },
-
-  // Add new schedule
-  async add(schedule: Omit<Schedule, 'id'>): Promise<string> {
-    const docRef = await addDoc(collection(db, 'schedules'), {
-      ...schedule,
-      createdAt: Timestamp.now()
-    });
-    return docRef.id;
-  },
-
-  // Update schedule
-  async update(id: string, schedule: Partial<Schedule>): Promise<void> {
-    const scheduleRef = doc(db, 'schedules', id);
-    await updateDoc(scheduleRef, {
-      ...schedule,
-      updatedAt: Timestamp.now()
-    });
-  },
-
-  // Delete schedule
-  async delete(id: string): Promise<void> {
-    await deleteDoc(doc(db, 'schedules', id));
-  },
-
-  // Listen to schedules changes
-  onSnapshot(callback: (schedules: Schedule[]) => void) {
-    return onSnapshot(
-      query(collection(db, 'schedules'), orderBy('date', 'desc')),
-      (snapshot) => {
-        const schedules = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        } as Schedule));
-        callback(schedules);
-      }
-    );
-  }
-};
-
-// Vacations Service
-export const vacationsService = {
-  // Get all vacations
-  async getAll(): Promise<Vacation[]> {
-    const querySnapshot = await getDocs(
-      query(collection(db, 'vacations'), orderBy('startDate', 'desc'))
-    );
-    return querySnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    } as Vacation));
-  },
-
-  // Get vacations by employee
-  async getByEmployee(employeeId: string): Promise<Vacation[]> {
-    const q = query(
-      collection(db, 'vacations'),
-      where('employeeId', '==', employeeId),
-      orderBy('startDate', 'desc')
-    );
-    const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    } as Vacation));
-  },
-
-  // Add new vacation
-  async add(vacation: Omit<Vacation, 'id'>): Promise<string> {
-    const docRef = await addDoc(collection(db, 'vacations'), {
-      ...vacation,
-      createdAt: Timestamp.now()
-    });
-    return docRef.id;
-  },
-
-  // Update vacation
-  async update(id: string, vacation: Partial<Vacation>): Promise<void> {
-    const vacationRef = doc(db, 'vacations', id);
-    await updateDoc(vacationRef, {
-      ...vacation,
-      updatedAt: Timestamp.now()
-    });
-  },
-
-  // Delete vacation
-  async delete(id: string): Promise<void> {
-    await deleteDoc(doc(db, 'vacations', id));
-  },
-
-  // Listen to vacations changes
-  onSnapshot(callback: (vacations: Vacation[]) => void) {
-    return onSnapshot(
-      query(collection(db, 'vacations'), orderBy('startDate', 'desc')),
-      (snapshot) => {
-        const vacations = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        } as Vacation));
-        callback(vacations);
-      }
-    );
-  }
-};
-
-// Extras Service
-export const extrasService = {
-  // Get all extras
-  async getAll(): Promise<Extra[]> {
-    const querySnapshot = await getDocs(
-      query(collection(db, 'extras'), orderBy('date', 'desc'))
-    );
-    return querySnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    } as Extra));
-  },
-
-  // Get extras by employee
-  async getByEmployee(employeeId: string): Promise<Extra[]> {
-    const q = query(
-      collection(db, 'extras'),
-      where('employeeId', '==', employeeId),
-      orderBy('date', 'desc')
-    );
-    const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    } as Extra));
-  },
-
-  // Get extras by date range
-  async getByDateRange(startDate: string, endDate: string): Promise<Extra[]> {
-    const q = query(
-      collection(db, 'extras'),
-      where('date', '>=', startDate),
-      where('date', '<=', endDate),
-      orderBy('date', 'desc')
-    );
-    const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    } as Extra));
-  },
-
-  // Get extras by employee and date range
-  async getByEmployeeAndDateRange(employeeId: string, startDate: string, endDate: string): Promise<Extra[]> {
-    const q = query(
-      collection(db, 'extras'),
-      where('employeeId', '==', employeeId),
-      where('date', '>=', startDate),
-      where('date', '<=', endDate),
-      orderBy('date', 'desc')
-    );
-    const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    } as Extra));
-  },
-
-  // Add new extra
-  async add(extra: Omit<Extra, 'id'>): Promise<string> {
-    const docRef = await addDoc(collection(db, 'extras'), {
-      ...extra,
-      createdAt: Timestamp.now()
-    });
-    return docRef.id;
-  },
-
-  // Update extra
-  async update(id: string, extra: Partial<Extra>): Promise<void> {
-    const extraRef = doc(db, 'extras', id);
-    await updateDoc(extraRef, {
-      ...extra,
-      updatedAt: Timestamp.now()
-    });
-  },
-
-  // Delete extra
-  async delete(id: string): Promise<void> {
-    await deleteDoc(doc(db, 'extras', id));
-  },
-
-  // Listen to extras changes
-  onSnapshot(callback: (extras: Extra[]) => void) {
-    return onSnapshot(
-      query(collection(db, 'extras'), orderBy('date', 'desc')),
-      (snapshot) => {
-        const extras = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        } as Extra));
-        callback(extras);
-      }
-    );
-  }
-};
-
-// Dashboard Service
-export const dashboardService = {
-  // Get dashboard stats
-  async getStats() {
-    const [employees, schedules, vacations, extras] = await Promise.all([
-      employeesService.getAll(),
-      schedulesService.getAll(),
-      vacationsService.getAll(),
-      extrasService.getAll()
-    ]);
-
-    const currentMonth = new Date().getMonth();
-    const currentYear = new Date().getFullYear();
-
-    // Filter current month data
-    const currentMonthExtras = extras.filter(extra => {
-      const extraDate = new Date(extra.date);
-      return extraDate.getMonth() === currentMonth && extraDate.getFullYear() === currentYear;
-    });
-
-    const pendingVacations = vacations.filter(vacation => vacation.status === 'pendiente');
-
-    return {
-      totalEmployees: employees.length,
-      activeEmployees: employees.filter(emp => emp.status === 'activo').length,
-      pendingVacations: pendingVacations.length,
-      monthlyExtraHours: currentMonthExtras.reduce((sum, extra) => sum + extra.hours, 0),
-      monthlyExtraAmount: currentMonthExtras.reduce((sum, extra) => sum + extra.amount, 0),
-      employees,
-      recentActivity: [
-        ...pendingVacations.slice(0, 3).map(vacation => ({
-          type: 'vacation',
-          message: `Solicitud de vacaciones pendiente`,
-          employee: employees.find(emp => emp.id === vacation.employeeId)?.name || 'Empleado',
-          date: vacation.startDate
-        })),
-        ...currentMonthExtras.slice(0, 2).map(extra => ({
-          type: 'extra',
-          message: `Horas extra registradas: ${extra.hours}h`,
-          employee: employees.find(emp => emp.id === extra.employeeId)?.name || 'Empleado',
-          date: extra.date
-        }))
-      ].slice(0, 5)
-    };
-  },
-
-  // Get employee dashboard stats
-  async getEmployeeStats(employeeId: string) {
-    const [employee, schedules, vacations, extras] = await Promise.all([
-      employeesService.getAll().then(emps => emps.find(emp => emp.id === employeeId)),
-      schedulesService.getByEmployee(employeeId),
-      vacationsService.getByEmployee(employeeId),
-      extrasService.getByEmployee(employeeId)
-    ]);
-
-    if (!employee) {
-      throw new Error('Employee not found');
-    }
-
-    const currentDate = new Date();
-    const currentMonth = currentDate.getMonth();
-    const currentYear = currentDate.getFullYear();
     
-    // Get current week (Monday to Sunday)
-    const startOfWeek = new Date(currentDate);
-    startOfWeek.setDate(currentDate.getDate() - currentDate.getDay() + 1);
-    const endOfWeek = new Date(startOfWeek);
-    endOfWeek.setDate(startOfWeek.getDate() + 6);
-
-    // Filter current month and week data
-    const currentMonthSchedules = schedules.filter(schedule => {
-      const scheduleDate = new Date(schedule.date);
-      return scheduleDate.getMonth() === currentMonth && scheduleDate.getFullYear() === currentYear;
-    });
-
-    const currentWeekSchedules = schedules.filter(schedule => {
-      const scheduleDate = new Date(schedule.date);
-      return scheduleDate >= startOfWeek && scheduleDate <= endOfWeek;
-    });
-
-    const currentMonthExtras = extras.filter(extra => {
-      const extraDate = new Date(extra.date);
-      return extraDate.getMonth() === currentMonth && extraDate.getFullYear() === currentYear;
-    });
-
-    const approvedVacations = vacations.filter(vacation => vacation.status === 'aprobada');
-    const pendingVacations = vacations.filter(vacation => vacation.status === 'pendiente');
-
-    // Calculate available vacation days (assuming 15 days per year)
-    const startDate = new Date(employee.startDate);
-    const yearsWorked = Math.floor((currentDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24 * 365));
-    const totalVacationDays = Math.max(yearsWorked * 15, 15); // Minimum 15 days
-    const usedVacationDays = approvedVacations.reduce((sum, vacation) => {
-      const start = new Date(vacation.startDate);
-      const end = new Date(vacation.endDate);
-      const days = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-      return sum + days;
-    }, 0);
-
+    if (querySnapshot.empty) {
+      return null;
+    }
+    
+    const doc = querySnapshot.docs[0];
     return {
-      employee,
-      totalVacationDays,
-      usedVacationDays,
-      availableVacationDays: totalVacationDays - usedVacationDays,
-      pendingVacations: pendingVacations.length,
-      weeklyHours: currentWeekSchedules.reduce((sum, schedule) => sum + schedule.hours, 0),
-      monthlyHours: currentMonthSchedules.reduce((sum, schedule) => sum + schedule.hours, 0),
-      monthlyExtraHours: currentMonthExtras.reduce((sum, extra) => sum + extra.hours, 0),
-      monthlyExtraAmount: currentMonthExtras.reduce((sum, extra) => sum + extra.amount, 0),
-      recentVacations: vacations.slice(0, 5),
-      recentSchedules: schedules.slice(0, 10)
-    };
+      id: doc.id,
+      ...doc.data(),
+      hireDate: doc.data().hireDate?.toDate() || new Date(),
+      createdAt: doc.data().createdAt?.toDate() || new Date()
+    } as Employee;
+  } catch (error) {
+    console.error('Error fetching employee:', error);
+    throw error;
+  }
+};
+
+// Calculate available vacation days based on work time
+export const calculateAvailableVacationDays = (hireDate: Date): number => {
+  const now = new Date();
+  const monthsWorked = (now.getFullYear() - hireDate.getFullYear()) * 12 + (now.getMonth() - hireDate.getMonth());
+  
+  // 15 days per year, proportional to months worked
+  const daysPerMonth = 15 / 12;
+  const availableDays = Math.floor(monthsWorked * daysPerMonth);
+  
+  // Cap at 15 days maximum
+  return Math.min(availableDays, 15);
+};
+
+// Schedule Services
+export const createSchedule = async (scheduleData: Omit<Schedule, 'id'>) => {
+  try {
+    const docRef = await addDoc(collection(db, 'schedules'), {
+      ...scheduleData,
+      date: Timestamp.fromDate(scheduleData.date)
+    });
+    return { id: docRef.id, ...scheduleData };
+  } catch (error) {
+    console.error('Error creating schedule:', error);
+    throw error;
+  }
+};
+
+export const getSchedules = async (): Promise<Schedule[]> => {
+  try {
+    const querySnapshot = await getDocs(collection(db, 'schedules'));
+    return querySnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+      date: doc.data().date?.toDate() || new Date()
+    })) as Schedule[];
+  } catch (error) {
+    console.error('Error fetching schedules:', error);
+    throw error;
+  }
+};
+
+export const getEmployeeSchedules = async (employeeId: string): Promise<Schedule[]> => {
+  try {
+    const q = query(
+      collection(db, 'schedules'), 
+      where('employeeId', '==', employeeId),
+      orderBy('date', 'desc')
+    );
+    const querySnapshot = await getDocs(q);
+    return querySnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+      date: doc.data().date?.toDate() || new Date()
+    })) as Schedule[];
+  } catch (error) {
+    console.error('Error fetching employee schedules:', error);
+    throw error;
+  }
+};
+
+export const updateSchedule = async (id: string, scheduleData: Partial<Schedule>) => {
+  try {
+    const scheduleRef = doc(db, 'schedules', id);
+    const updateData = { ...scheduleData };
+    if (scheduleData.date) {
+      updateData.date = Timestamp.fromDate(scheduleData.date);
+    }
+    await updateDoc(scheduleRef, updateData);
+  } catch (error) {
+    console.error('Error updating schedule:', error);
+    throw error;
+  }
+};
+
+export const deleteSchedule = async (id: string) => {
+  try {
+    await deleteDoc(doc(db, 'schedules', id));
+  } catch (error) {
+    console.error('Error deleting schedule:', error);
+    throw error;
+  }
+};
+
+// Weekly Schedule Services
+export const saveWeeklySchedule = async (weeklySchedule: WeeklySchedule) => {
+  try {
+    const docRef = await addDoc(collection(db, 'weeklySchedules'), weeklySchedule);
+    return { id: docRef.id, ...weeklySchedule };
+  } catch (error) {
+    console.error('Error saving weekly schedule:', error);
+    throw error;
+  }
+};
+
+export const getWeeklySchedule = async (employeeId: string): Promise<WeeklySchedule | null> => {
+  try {
+    const q = query(collection(db, 'weeklySchedules'), where('employeeId', '==', employeeId));
+    const querySnapshot = await getDocs(q);
+    
+    if (querySnapshot.empty) {
+      return null;
+    }
+    
+    const doc = querySnapshot.docs[0];
+    return { id: doc.id, ...doc.data() } as WeeklySchedule;
+  } catch (error) {
+    console.error('Error fetching weekly schedule:', error);
+    throw error;
+  }
+};
+
+export const updateWeeklySchedule = async (employeeId: string, schedules: WeeklySchedule['schedules']) => {
+  try {
+    const q = query(collection(db, 'weeklySchedules'), where('employeeId', '==', employeeId));
+    const querySnapshot = await getDocs(q);
+    
+    if (!querySnapshot.empty) {
+      const docRef = querySnapshot.docs[0].ref;
+      await updateDoc(docRef, { schedules });
+    } else {
+      // Create new weekly schedule if it doesn't exist
+      const employee = await getEmployeeById(employeeId);
+      if (employee) {
+        await saveWeeklySchedule({
+          employeeId,
+          employeeName: employee.name,
+          schedules
+        });
+      }
+    }
+  } catch (error) {
+    console.error('Error updating weekly schedule:', error);
+    throw error;
+  }
+};
+
+// Vacation Services
+export const createVacation = async (vacationData: Omit<Vacation, 'id'>) => {
+  try {
+    const docRef = await addDoc(collection(db, 'vacations'), {
+      ...vacationData,
+      startDate: Timestamp.fromDate(vacationData.startDate),
+      endDate: Timestamp.fromDate(vacationData.endDate),
+      requestDate: Timestamp.fromDate(vacationData.requestDate)
+    });
+    return { id: docRef.id, ...vacationData };
+  } catch (error) {
+    console.error('Error creating vacation:', error);
+    throw error;
+  }
+};
+
+export const getVacations = async (): Promise<Vacation[]> => {
+  try {
+    const querySnapshot = await getDocs(collection(db, 'vacations'));
+    return querySnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+      startDate: doc.data().startDate?.toDate() || new Date(),
+      endDate: doc.data().endDate?.toDate() || new Date(),
+      requestDate: doc.data().requestDate?.toDate() || new Date(),
+      reviewDate: doc.data().reviewDate?.toDate()
+    })) as Vacation[];
+  } catch (error) {
+    console.error('Error fetching vacations:', error);
+    throw error;
+  }
+};
+
+export const getEmployeeVacations = async (employeeId: string): Promise<Vacation[]> => {
+  try {
+    const q = query(
+      collection(db, 'vacations'), 
+      where('employeeId', '==', employeeId),
+      orderBy('requestDate', 'desc')
+    );
+    const querySnapshot = await getDocs(q);
+    return querySnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+      startDate: doc.data().startDate?.toDate() || new Date(),
+      endDate: doc.data().endDate?.toDate() || new Date(),
+      requestDate: doc.data().requestDate?.toDate() || new Date(),
+      reviewDate: doc.data().reviewDate?.toDate()
+    })) as Vacation[];
+  } catch (error) {
+    console.error('Error fetching employee vacations:', error);
+    throw error;
+  }
+};
+
+export const updateVacation = async (id: string, vacationData: Partial<Vacation>) => {
+  try {
+    const vacationRef = doc(db, 'vacations', id);
+    const updateData = { ...vacationData };
+    if (vacationData.startDate) {
+      updateData.startDate = Timestamp.fromDate(vacationData.startDate);
+    }
+    if (vacationData.endDate) {
+      updateData.endDate = Timestamp.fromDate(vacationData.endDate);
+    }
+    if (vacationData.requestDate) {
+      updateData.requestDate = Timestamp.fromDate(vacationData.requestDate);
+    }
+    if (vacationData.reviewDate) {
+      updateData.reviewDate = Timestamp.fromDate(vacationData.reviewDate);
+    }
+    await updateDoc(vacationRef, updateData);
+  } catch (error) {
+    console.error('Error updating vacation:', error);
+    throw error;
+  }
+};
+
+export const deleteVacation = async (id: string) => {
+  try {
+    await deleteDoc(doc(db, 'vacations', id));
+  } catch (error) {
+    console.error('Error deleting vacation:', error);
+    throw error;
+  }
+};
+
+// Extra Hours Services
+export const createExtra = async (extraData: Omit<Extra, 'id'>) => {
+  try {
+    const docRef = await addDoc(collection(db, 'extras'), {
+      ...extraData,
+      date: Timestamp.fromDate(extraData.date)
+    });
+    return { id: docRef.id, ...extraData };
+  } catch (error) {
+    console.error('Error creating extra:', error);
+    throw error;
+  }
+};
+
+export const getExtras = async (): Promise<Extra[]> => {
+  try {
+    const querySnapshot = await getDocs(collection(db, 'extras'));
+    return querySnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+      date: doc.data().date?.toDate() || new Date()
+    })) as Extra[];
+  } catch (error) {
+    console.error('Error fetching extras:', error);
+    throw error;
+  }
+};
+
+export const getEmployeeExtras = async (employeeId: string): Promise<Extra[]> => {
+  try {
+    const q = query(
+      collection(db, 'extras'), 
+      where('employeeId', '==', employeeId),
+      orderBy('date', 'desc')
+    );
+    const querySnapshot = await getDocs(q);
+    return querySnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+      date: doc.data().date?.toDate() || new Date()
+    })) as Extra[];
+  } catch (error) {
+    console.error('Error fetching employee extras:', error);
+    throw error;
+  }
+};
+
+export const updateExtra = async (id: string, extraData: Partial<Extra>) => {
+  try {
+    const extraRef = doc(db, 'extras', id);
+    const updateData = { ...extraData };
+    if (extraData.date) {
+      updateData.date = Timestamp.fromDate(extraData.date);
+    }
+    await updateDoc(extraRef, updateData);
+  } catch (error) {
+    console.error('Error updating extra:', error);
+    throw error;
+  }
+};
+
+export const deleteExtra = async (id: string) => {
+  try {
+    await deleteDoc(doc(db, 'extras', id));
+  } catch (error) {
+    console.error('Error deleting extra:', error);
+    throw error;
   }
 };

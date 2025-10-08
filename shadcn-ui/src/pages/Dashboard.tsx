@@ -1,11 +1,11 @@
-import React, { useEffect, useState } from 'react';
-import { useAuth } from '@/contexts/AuthContext';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { useState, useEffect } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { useAuth } from '@/contexts/AuthContext';
 import { Calendar, Clock, Plane, Users, Loader2 } from 'lucide-react';
 import { Employee, Vacation, Extra } from '@/types';
-import { dashboardService } from '@/services/firebaseService';
+import { getEmployees, getVacations, getExtras } from '@/services/firebaseService';
 import { toast } from 'sonner';
 
 interface DashboardStats {
@@ -19,65 +19,77 @@ interface DashboardStats {
     type: string;
     message: string;
     employee: string;
-    date: string;
+    date: Date;
   }>;
 }
 
-const Dashboard: React.FC = () => {
-  const { currentUser } = useAuth();
+export default function Dashboard() {
+  const { user } = useAuth();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
-  const [employee, setEmployee] = useState<Employee | null>(null);
 
   useEffect(() => {
-    loadDashboardData();
-  }, [currentUser]);
+    if (user?.role === 'admin') {
+      loadDashboardStats();
+    }
+  }, [user]);
 
-  const loadDashboardData = async () => {
+  const loadDashboardStats = async () => {
     try {
       setLoading(true);
-      const dashboardStats = await dashboardService.getStats();
-      setStats(dashboardStats);
+      
+      const [employees, vacations, extras] = await Promise.all([
+        getEmployees(),
+        getVacations(),
+        getExtras()
+      ]);
 
-      // Si no es admin, buscar datos del empleado actual
-      if (currentUser?.role !== 'admin' && currentUser?.email) {
-        const currentEmployee = dashboardStats.employees.find(
-          emp => emp.email === currentUser.email
-        );
-        setEmployee(currentEmployee || null);
-      }
+      const currentMonth = new Date().getMonth();
+      const currentYear = new Date().getFullYear();
+
+      // Filter current month data
+      const currentMonthExtras = extras.filter(extra => {
+        const extraDate = new Date(extra.date);
+        return extraDate.getMonth() === currentMonth && extraDate.getFullYear() === currentYear;
+      });
+
+      const pendingVacations = vacations.filter(vacation => vacation.status === 'pending');
+
+      const dashboardStats: DashboardStats = {
+        totalEmployees: employees.length,
+        activeEmployees: employees.length, // Assuming all are active for now
+        pendingVacations: pendingVacations.length,
+        monthlyExtraHours: currentMonthExtras.reduce((sum, extra) => sum + extra.hours, 0),
+        monthlyExtraAmount: currentMonthExtras.reduce((sum, extra) => sum + extra.total, 0),
+        employees,
+        recentActivity: [
+          ...pendingVacations.slice(0, 3).map(vacation => ({
+            type: 'vacation',
+            message: `Solicitud de vacaciones pendiente`,
+            employee: vacation.employeeName,
+            date: vacation.requestDate
+          })),
+          ...currentMonthExtras.slice(0, 2).map(extra => ({
+            type: 'extra',
+            message: `Horas extra registradas: ${extra.hours}h`,
+            employee: extra.employeeName,
+            date: extra.date
+          }))
+        ].slice(0, 5)
+      };
+
+      setStats(dashboardStats);
     } catch (error) {
-      console.error('Error loading dashboard:', error);
-      toast.error('Error al cargar dashboard');
+      console.error('Error loading dashboard stats:', error);
+      toast.error('Error cargando estadísticas del dashboard');
     } finally {
       setLoading(false);
     }
   };
 
-  const calculateWorkedTime = (startDate: string) => {
-    const start = new Date(startDate);
-    const now = new Date();
-    const diffTime = Math.abs(now.getTime() - start.getTime());
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    const months = Math.floor(diffDays / 30);
-    const years = Math.floor(months / 12);
-    
-    if (years > 0) {
-      return `${years} año${years > 1 ? 's' : ''} ${months % 12} mes${months % 12 !== 1 ? 'es' : ''}`;
-    }
-    return `${months} mes${months !== 1 ? 'es' : ''}`;
-  };
-
-  const calculateVacationDays = (startDate: string) => {
-    const start = new Date(startDate);
-    const now = new Date();
-    const weeksWorked = Math.floor((now.getTime() - start.getTime()) / (1000 * 60 * 60 * 24 * 7));
-    return Math.floor((weeksWorked / 50) * 14);
-  };
-
   if (loading) {
     return (
-      <div className="p-6 flex items-center justify-center min-h-96">
+      <div className="flex items-center justify-center h-64">
         <div className="flex items-center space-x-2">
           <Loader2 className="h-6 w-6 animate-spin" />
           <span>Cargando dashboard...</span>
@@ -86,212 +98,133 @@ const Dashboard: React.FC = () => {
     );
   }
 
-  if (currentUser?.role === 'admin') {
+  if (!stats) {
     return (
-      <div className="p-6">
-        <div className="mb-6">
-          <h1 className="text-3xl font-bold text-gray-900">Dashboard Administrativo</h1>
-          <p className="text-gray-600">Bienvenido, {currentUser.name}</p>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Empleados</CardTitle>
-              <Users className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats?.totalEmployees || 0}</div>
-              <p className="text-xs text-muted-foreground">
-                {stats?.activeEmployees || 0} activos
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Vacaciones Pendientes</CardTitle>
-              <Plane className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats?.pendingVacations || 0}</div>
-              <p className="text-xs text-muted-foreground">Solicitudes por aprobar</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Horas Extra (Mes)</CardTitle>
-              <Clock className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats?.monthlyExtraHours || 0}</div>
-              <p className="text-xs text-muted-foreground">
-                ₡{stats?.monthlyExtraAmount?.toLocaleString() || '0'} total
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Empleados Activos</CardTitle>
-              <Calendar className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats?.activeEmployees || 0}</div>
-              <p className="text-xs text-muted-foreground">Empleados trabajando</p>
-            </CardContent>
-          </Card>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Empleados Activos</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                {stats?.employees?.filter(emp => emp.status === 'activo').map(employee => (
-                  <div key={employee.id} className="flex items-center justify-between">
-                    <div className="flex items-center space-x-3">
-                      <div 
-                        className="w-3 h-3 rounded-full"
-                        style={{ backgroundColor: employee.color }}
-                      />
-                      <div>
-                        <p className="font-medium">{employee.name}</p>
-                        <p className="text-sm text-gray-600 capitalize">
-                          {employee.role} • ₡{employee.hourlyRate.toLocaleString()}/hora
-                        </p>
-                      </div>
-                    </div>
-                    <Badge variant="secondary">Activo</Badge>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Actividad Reciente</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                {stats?.recentActivity?.length ? (
-                  stats.recentActivity.map((activity, index) => (
-                    <div key={index} className="text-sm">
-                      <p className="font-medium">{activity.message}</p>
-                      <p className="text-gray-600">
-                        {activity.employee} - {new Date(activity.date).toLocaleDateString('es-CR')}
-                      </p>
-                    </div>
-                  ))
-                ) : (
-                  <p className="text-gray-500 text-center py-4">No hay actividad reciente</p>
-                )}
-              </div>
-            </CardContent>
-          </Card>
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <h1 className="text-2xl font-bold text-gray-900">Error</h1>
+          <p className="text-gray-600">No se pudo cargar la información del dashboard</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="p-6">
-      <div className="mb-6">
-        <h1 className="text-3xl font-bold text-gray-900">Mi Información</h1>
-        <p className="text-gray-600">Bienvenido, {currentUser?.name}</p>
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-3xl font-bold">Dashboard</h1>
+        <Button onClick={loadDashboardStats} variant="outline">
+          Actualizar
+        </Button>
       </div>
 
-      {employee && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-          <Card>
-            <CardHeader>
-              <CardTitle>Información Personal</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Nombre Completo</p>
-                <p className="text-lg">{employee.name}</p>
-              </div>
-              <div>
-                <p className="text-sm font-medium text-gray-600">Rol</p>
-                <Badge variant="secondary" className="capitalize">{employee.role}</Badge>
-              </div>
-              <div>
-                <p className="text-sm font-medium text-gray-600">Fecha de Ingreso</p>
-                <p>{new Date(employee.startDate).toLocaleDateString('es-CR')}</p>
-                <p className="text-xs text-gray-500">{calculateWorkedTime(employee.startDate)}</p>
-              </div>
-              <div>
-                <p className="text-sm font-medium text-gray-600">Tarifa por Hora</p>
-                <p className="text-lg font-semibold">₡{employee.hourlyRate.toLocaleString()}</p>
-              </div>
-            </CardContent>
-          </Card>
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Total Empleados</CardTitle>
+            <Users className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{stats.totalEmployees}</div>
+            <p className="text-xs text-muted-foreground">
+              {stats.activeEmployees} activos
+            </p>
+          </CardContent>
+        </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Resumen del Mes</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2">
-                  <Plane className="h-5 w-5 text-blue-600" />
-                  <span>Días de Vacaciones</span>
-                </div>
-                <span className="font-semibold">
-                  {calculateVacationDays(employee.startDate)} disponibles
-                </span>
-              </div>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Vacaciones Pendientes</CardTitle>
+            <Plane className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{stats.pendingVacations}</div>
+            <p className="text-xs text-muted-foreground">
+              solicitudes por revisar
+            </p>
+          </CardContent>
+        </Card>
 
-              {employee.role === 'empleado' && (
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-2">
-                    <Clock className="h-5 w-5 text-green-600" />
-                    <span>Horas Extra (Mes)</span>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Horas Extra del Mes</CardTitle>
+            <Clock className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{stats.monthlyExtraHours}</div>
+            <p className="text-xs text-muted-foreground">
+              horas registradas
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Monto Extra del Mes</CardTitle>
+            <Calendar className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">${stats.monthlyExtraAmount.toLocaleString()}</div>
+            <p className="text-xs text-muted-foreground">
+              en horas extra
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Recent Activity */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>Actividad Reciente</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {stats.recentActivity.length === 0 ? (
+              <p className="text-muted-foreground text-center py-4">
+                No hay actividad reciente
+              </p>
+            ) : (
+              <div className="space-y-4">
+                {stats.recentActivity.map((activity, index) => (
+                  <div key={index} className="flex items-center space-x-4">
+                    <div className={`w-2 h-2 rounded-full ${
+                      activity.type === 'vacation' ? 'bg-blue-500' : 'bg-green-500'
+                    }`} />
+                    <div className="flex-1">
+                      <p className="text-sm font-medium">{activity.message}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {activity.employee} • {activity.date.toLocaleDateString()}
+                      </p>
+                    </div>
                   </div>
-                  <span className="font-semibold">0 horas</span>
-                </div>
-              )}
-
-              <div className="pt-3 border-t">
-                <div className="flex items-center justify-between">
-                  <span>Salario Base Estimado</span>
-                  <span className="text-lg font-bold text-green-600">
-                    ₡{(160 * employee.hourlyRate).toLocaleString()}
-                  </span>
-                </div>
+                ))}
               </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
+            )}
+          </CardContent>
+        </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Acciones Rápidas</CardTitle>
-          <CardDescription>
-            Gestiona tus solicitudes y revisa tu información
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-wrap gap-4">
-            <Button className="flex items-center space-x-2">
-              <Plane className="h-4 w-4" />
-              <span>Solicitar Vacaciones</span>
-            </Button>
-            <Button variant="outline" className="flex items-center space-x-2">
-              <Calendar className="h-4 w-4" />
-              <span>Ver Mi Horario</span>
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>Empleados Activos</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              {stats.employees.slice(0, 5).map((employee) => (
+                <div key={employee.id} className="flex items-center justify-between">
+                  <div>
+                    <p className="font-medium">{employee.name}</p>
+                    <p className="text-sm text-muted-foreground">{employee.position}</p>
+                  </div>
+                  <Badge variant="secondary">
+                    {employee.department}
+                  </Badge>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
-};
-
-export default Dashboard;
+}

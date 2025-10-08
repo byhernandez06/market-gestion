@@ -1,72 +1,73 @@
 export interface User {
   id: string;
   email: string;
+  role: 'admin' | 'employee';
   name: string;
-  role: 'admin' | 'empleado' | 'refuerzo';
-  employeeId?: string;
-  createdAt: string;
+  createdAt: Date;
 }
 
 export interface Employee {
   id: string;
   name: string;
-  role: 'empleado' | 'refuerzo';
-  color: string;
-  startDate: string;
-  hourlyRate: number;
-  status: 'activo' | 'inactivo';
   email: string;
-  userId?: string;
+  position: string;
+  department: string;
+  salary: number;
+  hireDate: Date;
+  createdAt: Date;
 }
 
 export interface Schedule {
   id: string;
   employeeId: string;
-  date: string;
+  employeeName: string;
+  date: Date;
   startTime: string;
   endTime: string;
-  hours: number;
-  type: 'regular' | 'extra';
+  isRecurring: boolean;
+  dayOfWeek?: number; // 0 = Sunday, 1 = Monday, etc.
+  notes?: string;
 }
 
-export interface ScheduleBlock {
-  id: string;
-  startTime: string;
-  endTime: string;
-  type: 'regular' | 'break';
+export interface WeeklySchedule {
+  employeeId: string;
+  employeeName: string;
+  schedules: {
+    [key: string]: { // day of week (0-6)
+      startTime: string;
+      endTime: string;
+      isWorkDay: boolean;
+    }
+  };
 }
 
 export interface Vacation {
   id: string;
   employeeId: string;
-  startDate: string;
-  endDate: string;
-  days: number;
-  status: 'pendiente' | 'aprobada' | 'rechazada';
-  requestDate: string;
-  approvedBy?: string;
-  reason?: string;
+  employeeName: string;
+  startDate: Date;
+  endDate: Date;
+  totalDays?: number;
+  totalHours?: number;
+  isHourlyRequest: boolean;
+  startTime?: string; // for hourly requests
+  endTime?: string; // for hourly requests
+  reason: string;
+  status: 'pending' | 'approved' | 'rejected';
+  requestDate: Date;
+  reviewedBy?: string;
+  reviewDate?: Date;
+  comments?: string;
 }
 
 export interface Extra {
   id: string;
   employeeId: string;
-  date: string;
+  employeeName: string;
+  date: Date;
   hours: number;
-  amount: number;
-  description?: string;
-}
-
-export interface CalendarEvent {
-  id: string;
-  title: string;
-  start: string;
-  end: string;
-  backgroundColor: string;
-  borderColor: string;
-  extendedProps: {
-    type: 'schedule' | 'vacation';
-    employeeId: string;
-    employeeName: string;
-  };
+  description: string;
+  hourlyRate: number;
+  total: number;
+  approved: boolean;
 }

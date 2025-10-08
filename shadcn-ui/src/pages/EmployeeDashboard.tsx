@@ -1,382 +1,347 @@
-import React, { useState, useEffect } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { useState, useEffect } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Calendar, Clock, DollarSign, User, Plus, CalendarDays, Loader2 } from 'lucide-react';
-import { useAuth } from '@/contexts/AuthContext';
-import { dashboardService, vacationsService } from '@/services/firebaseService';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Calendar, Clock, Plus, User, CalendarDays, Briefcase } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+import { 
+  getEmployeeVacations, 
+  getEmployeeExtras, 
+  createVacation, 
+  getEmployeeById,
+  calculateAvailableVacationDays 
+} from '@/services/firebaseService';
+import { Vacation, Extra, Employee } from '@/types';
 import { toast } from 'sonner';
-import { Vacation, Schedule, Employee } from '@/types';
 
-interface EmployeeStats {
-  employee: Employee;
-  totalVacationDays: number;
-  usedVacationDays: number;
-  availableVacationDays: number;
-  pendingVacations: number;
-  weeklyHours: number;
-  monthlyHours: number;
-  monthlyExtraHours: number;
-  monthlyExtraAmount: number;
-  recentVacations: Vacation[];
-  recentSchedules: Schedule[];
-}
-
-const EmployeeDashboard: React.FC = () => {
-  const { currentEmployee } = useAuth();
-  const [stats, setStats] = useState<EmployeeStats | null>(null);
+export default function EmployeeDashboard() {
+  const { user } = useAuth();
+  const [employee, setEmployee] = useState<Employee | null>(null);
+  const [vacations, setVacations] = useState<Vacation[]>([]);
+  const [extras, setExtras] = useState<Extra[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showVacationForm, setShowVacationForm] = useState(false);
+  const [availableVacationDays, setAvailableVacationDays] = useState(0);
+  const [isVacationDialogOpen, setIsVacationDialogOpen] = useState(false);
+
+  // Vacation form state
   const [vacationForm, setVacationForm] = useState({
     startDate: '',
     endDate: '',
-    reason: ''
+    reason: '',
+    isHourlyRequest: false,
+    startTime: '',
+    endTime: ''
   });
 
   useEffect(() => {
-    if (currentEmployee) {
-      loadEmployeeStats();
+    if (user?.id) {
+      loadEmployeeData();
     }
-  }, [currentEmployee]);
+  }, [user]);
 
-  const loadEmployeeStats = async () => {
-    if (!currentEmployee) return;
+  const loadEmployeeData = async () => {
+    if (!user?.id) return;
     
     try {
       setLoading(true);
-      const employeeStats = await dashboardService.getEmployeeStats(currentEmployee.id);
-      setStats(employeeStats);
+      
+      // Load employee info
+      const employeeData = await getEmployeeById(user.id);
+      if (employeeData) {
+        setEmployee(employeeData);
+        // Calculate available vacation days based on hire date
+        const availableDays = calculateAvailableVacationDays(employeeData.hireDate);
+        setAvailableVacationDays(availableDays);
+      }
+      
+      // Load vacations and extras
+      const [vacationsData, extrasData] = await Promise.all([
+        getEmployeeVacations(user.id),
+        getEmployeeExtras(user.id)
+      ]);
+      
+      setVacations(vacationsData);
+      setExtras(extrasData);
     } catch (error) {
-      console.error('Error loading employee stats:', error);
-      toast.error('Error al cargar estadísticas');
+      console.error('Error loading employee data:', error);
+      toast.error('Error cargando datos del empleado');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleVacationRequest = async (e: React.FormEvent) => {
+  const handleVacationSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!currentEmployee) return;
-
-    if (!vacationForm.startDate || !vacationForm.endDate) {
-      toast.error('Por favor completa las fechas');
-      return;
-    }
-
-    const startDate = new Date(vacationForm.startDate);
-    const endDate = new Date(vacationForm.endDate);
-    
-    if (endDate < startDate) {
-      toast.error('La fecha de fin debe ser posterior a la fecha de inicio');
-      return;
-    }
-
-    const days = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    if (!user?.id || !employee) return;
 
     try {
-      await vacationsService.add({
-        employeeId: currentEmployee.id,
-        startDate: vacationForm.startDate,
-        endDate: vacationForm.endDate,
-        days,
-        status: 'pendiente',
-        requestDate: new Date().toISOString().split('T')[0],
-        reason: vacationForm.reason
-      });
+      let totalDays = 0;
+      let totalHours = 0;
 
-      toast.success('Solicitud de vacaciones enviada');
-      setShowVacationForm(false);
-      setVacationForm({ startDate: '', endDate: '', reason: '' });
-      loadEmployeeStats(); // Reload stats
+      if (vacationForm.isHourlyRequest) {
+        // Calculate hours between start and end time
+        const start = new Date(`2000-01-01T${vacationForm.startTime}`);
+        const end = new Date(`2000-01-01T${vacationForm.endTime}`);
+        totalHours = (end.getTime() - start.getTime()) / (1000 * 60 * 60);
+      } else {
+        // Calculate days between start and end date
+        const start = new Date(vacationForm.startDate);
+        const end = new Date(vacationForm.endDate);
+        totalDays = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+      }
+
+      const vacationData: Omit<Vacation, 'id'> = {
+        employeeId: user.id,
+        employeeName: employee.name,
+        startDate: new Date(vacationForm.startDate),
+        endDate: new Date(vacationForm.endDate),
+        totalDays: vacationForm.isHourlyRequest ? 0 : totalDays,
+        totalHours: vacationForm.isHourlyRequest ? totalHours : 0,
+        isHourlyRequest: vacationForm.isHourlyRequest,
+        startTime: vacationForm.isHourlyRequest ? vacationForm.startTime : undefined,
+        endTime: vacationForm.isHourlyRequest ? vacationForm.endTime : undefined,
+        reason: vacationForm.reason,
+        status: 'pending',
+        requestDate: new Date()
+      };
+
+      await createVacation(vacationData);
+      toast.success('Solicitud de vacaciones enviada correctamente');
+      
+      // Reset form and reload data
+      setVacationForm({
+        startDate: '',
+        endDate: '',
+        reason: '',
+        isHourlyRequest: false,
+        startTime: '',
+        endTime: ''
+      });
+      setIsVacationDialogOpen(false);
+      loadEmployeeData();
     } catch (error) {
-      console.error('Error requesting vacation:', error);
-      toast.error('Error al solicitar vacaciones');
+      console.error('Error creating vacation request:', error);
+      toast.error('Error al enviar solicitud de vacaciones');
     }
   };
 
+  const pendingVacations = vacations.filter(v => v.status === 'pending');
+  const approvedVacations = vacations.filter(v => v.status === 'approved');
+  const usedVacationDays = approvedVacations.reduce((total, vacation) => {
+    return total + (vacation.totalDays || 0);
+  }, 0);
+  const usedVacationHours = approvedVacations.reduce((total, vacation) => {
+    return total + (vacation.totalHours || 0);
+  }, 0);
+
   if (loading) {
     return (
-      <div className="p-6 flex items-center justify-center min-h-96">
-        <div className="flex items-center space-x-2">
-          <Loader2 className="h-6 w-6 animate-spin" />
-          <span>Cargando información...</span>
-        </div>
+      <div className="flex items-center justify-center h-64">
+        <div className="text-lg">Cargando...</div>
       </div>
     );
   }
-
-  if (!currentEmployee || !stats) {
-    return (
-      <div className="p-6">
-        <div className="text-center">
-          <h1 className="text-2xl font-bold text-gray-900">Error</h1>
-          <p className="text-gray-600">No se pudo cargar la información del empleado</p>
-        </div>
-      </div>
-    );
-  }
-
-  const { employee, totalVacationDays, usedVacationDays, availableVacationDays, 
-          weeklyHours, monthlyHours, monthlyExtraHours, monthlyExtraAmount, 
-          recentVacations, recentSchedules } = stats;
 
   return (
-    <div className="p-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-center space-x-4">
-        <div 
-          className="w-12 h-12 rounded-full flex items-center justify-center"
-          style={{ backgroundColor: employee.color }}
-        >
-          <User className="h-6 w-6 text-white" />
-        </div>
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">¡Hola, {employee.name}!</h1>
-          <p className="text-gray-600 capitalize">
-            {employee.role} • Ingreso: {new Date(employee.startDate).toLocaleDateString('es-CR')}
-          </p>
-        </div>
-      </div>
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-3xl font-bold">Mi Dashboard</h1>
+        <Dialog open={isVacationDialogOpen} onOpenChange={setIsVacationDialogOpen}>
+          <DialogTrigger asChild>
+            <Button>
+              <Plus className="h-4 w-4 mr-2" />
+              Solicitar Vacaciones
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Solicitar Vacaciones</DialogTitle>
+            </DialogHeader>
+            <form onSubmit={handleVacationSubmit} className="space-y-4">
+              <div className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  id="isHourlyRequest"
+                  checked={vacationForm.isHourlyRequest}
+                  onChange={(e) => setVacationForm(prev => ({ ...prev, isHourlyRequest: e.target.checked }))}
+                />
+                <Label htmlFor="isHourlyRequest">Solicitar por horas (en un día específico)</Label>
+              </div>
 
-      {/* Employee Info Card */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center space-x-2">
-            <User className="h-5 w-5" />
-            <span>Mi Información</span>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div>
-              <p className="text-sm font-medium text-gray-600">Rol</p>
-              <p className="text-lg capitalize">{employee.role}</p>
-            </div>
-            <div>
-              <p className="text-sm font-medium text-gray-600">Tarifa por Hora</p>
-              <p className="text-lg font-semibold text-green-600">₡{employee.hourlyRate.toLocaleString()}</p>
-            </div>
-            <div>
-              <p className="text-sm font-medium text-gray-600">Estado</p>
-              <Badge variant={employee.status === 'activo' ? 'default' : 'secondary'}>
-                {employee.status}
-              </Badge>
-            </div>
-            <div>
-              <p className="text-sm font-medium text-gray-600">Email</p>
-              <p className="text-sm">{employee.email}</p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="startDate">
+                    {vacationForm.isHourlyRequest ? 'Fecha' : 'Fecha de Inicio'}
+                  </Label>
+                  <Input
+                    id="startDate"
+                    type="date"
+                    value={vacationForm.startDate}
+                    onChange={(e) => setVacationForm(prev => ({ ...prev, startDate: e.target.value }))}
+                    required
+                  />
+                </div>
+                {!vacationForm.isHourlyRequest && (
+                  <div>
+                    <Label htmlFor="endDate">Fecha de Fin</Label>
+                    <Input
+                      id="endDate"
+                      type="date"
+                      value={vacationForm.endDate}
+                      onChange={(e) => setVacationForm(prev => ({ ...prev, endDate: e.target.value }))}
+                      required
+                    />
+                  </div>
+                )}
+              </div>
+
+              {vacationForm.isHourlyRequest && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="startTime">Hora de Inicio</Label>
+                    <Input
+                      id="startTime"
+                      type="time"
+                      value={vacationForm.startTime}
+                      onChange={(e) => setVacationForm(prev => ({ ...prev, startTime: e.target.value }))}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="endTime">Hora de Fin</Label>
+                    <Input
+                      id="endTime"
+                      type="time"
+                      value={vacationForm.endTime}
+                      onChange={(e) => setVacationForm(prev => ({ ...prev, endTime: e.target.value }))}
+                      required
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <Label htmlFor="reason">Motivo</Label>
+                <Textarea
+                  id="reason"
+                  value={vacationForm.reason}
+                  onChange={(e) => setVacationForm(prev => ({ ...prev, reason: e.target.value }))}
+                  placeholder="Describe el motivo de tu solicitud..."
+                  required
+                />
+              </div>
+
+              <Button type="submit" className="w-full">
+                Enviar Solicitud
+              </Button>
+            </form>
+          </DialogContent>
+        </Dialog>
+      </div>
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Vacaciones Disponibles</CardTitle>
-            <CalendarDays className="h-4 w-4 text-muted-foreground" />
+            <Calendar className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{availableVacationDays}</div>
+            <div className="text-2xl font-bold">{availableVacationDays - usedVacationDays}</div>
             <p className="text-xs text-muted-foreground">
-              {usedVacationDays} de {totalVacationDays} días usados
+              de {availableVacationDays} días totales
             </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Horas Esta Semana</CardTitle>
+            <CardTitle className="text-sm font-medium">Solicitudes Pendientes</CardTitle>
             <Clock className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{weeklyHours}</div>
+            <div className="text-2xl font-bold">{pendingVacations.length}</div>
             <p className="text-xs text-muted-foreground">
-              Horas trabajadas
+              esperando aprobación
             </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
-              {employee.role === 'refuerzo' ? 'Horas Este Mes' : 'Horas Extra Este Mes'}
-            </CardTitle>
-            <Clock className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">Horas Extra</CardTitle>
+            <Briefcase className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{extras.length}</div>
+            <p className="text-xs text-muted-foreground">
+              registros este mes
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Tiempo en la Empresa</CardTitle>
+            <User className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {employee.role === 'refuerzo' ? monthlyHours : monthlyExtraHours}
+              {employee ? Math.floor((new Date().getTime() - employee.hireDate.getTime()) / (1000 * 60 * 60 * 24 * 30)) : 0}
             </div>
             <p className="text-xs text-muted-foreground">
-              {employee.role === 'refuerzo' ? 'Total del mes' : 'Horas extra'}
+              meses trabajados
             </p>
           </CardContent>
         </Card>
-
-        {employee.role === 'empleado' && (
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Monto Extra</CardTitle>
-              <DollarSign className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">₡{monthlyExtraAmount.toLocaleString()}</div>
-              <p className="text-xs text-muted-foreground">
-                Por horas extra
-              </p>
-            </CardContent>
-          </Card>
-        )}
       </div>
 
-      {/* Vacation Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card>
-          <CardHeader>
-            <div className="flex justify-between items-center">
-              <CardTitle className="flex items-center space-x-2">
-                <Calendar className="h-5 w-5" />
-                <span>Vacaciones</span>
-              </CardTitle>
-              <Button onClick={() => setShowVacationForm(true)} size="sm">
-                <Plus className="h-4 w-4 mr-2" />
-                Solicitar
-              </Button>
-            </div>
-            <CardDescription>
-              Gestiona tus solicitudes de vacaciones
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {recentVacations.length === 0 ? (
-              <p className="text-gray-500 text-center py-4">No hay solicitudes de vacaciones</p>
-            ) : (
-              <div className="space-y-3">
-                {recentVacations.map((vacation: Vacation) => (
-                  <div key={vacation.id} className="flex justify-between items-center p-3 border rounded-lg">
-                    <div>
-                      <p className="font-medium">
-                        {new Date(vacation.startDate).toLocaleDateString('es-CR')} - {new Date(vacation.endDate).toLocaleDateString('es-CR')}
-                      </p>
-                      <p className="text-sm text-gray-600">{vacation.days} días</p>
-                      {vacation.reason && <p className="text-xs text-gray-500">{vacation.reason}</p>}
-                    </div>
-                    <Badge variant={
-                      vacation.status === 'aprobada' ? 'default' : 
-                      vacation.status === 'rechazada' ? 'destructive' : 'secondary'
-                    }>
-                      {vacation.status}
-                    </Badge>
+      {/* Recent Vacation Requests */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Mis Solicitudes de Vacaciones</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {vacations.length === 0 ? (
+            <p className="text-muted-foreground">No tienes solicitudes de vacaciones.</p>
+          ) : (
+            <div className="space-y-4">
+              {vacations.slice(0, 5).map((vacation) => (
+                <div key={vacation.id} className="flex items-center justify-between p-4 border rounded-lg">
+                  <div>
+                    <p className="font-medium">
+                      {vacation.isHourlyRequest 
+                        ? `${vacation.startDate.toLocaleDateString()} (${vacation.startTime} - ${vacation.endTime})`
+                        : `${vacation.startDate.toLocaleDateString()} - ${vacation.endDate.toLocaleDateString()}`
+                      }
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      {vacation.isHourlyRequest 
+                        ? `${vacation.totalHours} horas`
+                        : `${vacation.totalDays} días`
+                      } • {vacation.reason}
+                    </p>
                   </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
-              <Clock className="h-5 w-5" />
-              <span>Horarios Recientes</span>
-            </CardTitle>
-            <CardDescription>
-              Tus últimos registros de horario
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {recentSchedules.length === 0 ? (
-              <p className="text-gray-500 text-center py-4">No hay horarios registrados</p>
-            ) : (
-              <div className="space-y-3">
-                {recentSchedules.slice(0, 5).map((schedule: Schedule) => (
-                  <div key={schedule.id} className="flex justify-between items-center p-3 border rounded-lg">
-                    <div>
-                      <p className="font-medium">{new Date(schedule.date).toLocaleDateString('es-CR')}</p>
-                      <p className="text-sm text-gray-600">
-                        {schedule.startTime} - {schedule.endTime}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="font-medium">{schedule.hours}h</p>
-                      <Badge variant={schedule.type === 'extra' ? 'secondary' : 'default'}>
-                        {schedule.type === 'extra' ? 'Extra' : 'Regular'}
-                      </Badge>
-                    </div>
+                  <div className="text-right">
+                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                      vacation.status === 'approved' ? 'bg-green-100 text-green-800' :
+                      vacation.status === 'rejected' ? 'bg-red-100 text-red-800' :
+                      'bg-yellow-100 text-yellow-800'
+                    }`}>
+                      {vacation.status === 'approved' ? 'Aprobada' :
+                       vacation.status === 'rejected' ? 'Rechazada' : 'Pendiente'}
+                    </span>
                   </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Vacation Request Modal */}
-      <Dialog open={showVacationForm} onOpenChange={setShowVacationForm}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Solicitar Vacaciones</DialogTitle>
-          </DialogHeader>
-          <form onSubmit={handleVacationRequest} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="startDate">Fecha de Inicio *</Label>
-              <Input
-                id="startDate"
-                type="date"
-                value={vacationForm.startDate}
-                onChange={(e) => setVacationForm(prev => ({ ...prev, startDate: e.target.value }))}
-                required
-              />
+                </div>
+              ))}
             </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="endDate">Fecha de Fin *</Label>
-              <Input
-                id="endDate"
-                type="date"
-                value={vacationForm.endDate}
-                onChange={(e) => setVacationForm(prev => ({ ...prev, endDate: e.target.value }))}
-                required
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="reason">Motivo (opcional)</Label>
-              <Textarea
-                id="reason"
-                value={vacationForm.reason}
-                onChange={(e) => setVacationForm(prev => ({ ...prev, reason: e.target.value }))}
-                placeholder="Describe el motivo de tus vacaciones..."
-                rows={3}
-              />
-            </div>
-
-            <div className="flex space-x-2 pt-4">
-              <Button type="submit" className="flex-1">
-                Enviar Solicitud
-              </Button>
-              <Button 
-                type="button" 
-                variant="outline" 
-                onClick={() => {
-                  setShowVacationForm(false);
-                  setVacationForm({ startDate: '', endDate: '', reason: '' });
-                }}
-              >
-                Cancelar
-              </Button>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
-};
-
-export default EmployeeDashboard;
+}

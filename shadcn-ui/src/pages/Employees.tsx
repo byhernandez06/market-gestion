@@ -1,378 +1,253 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Edit, Trash2, Eye, Loader2, Users, Copy, Check } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, Users, Eye, EyeOff } from 'lucide-react';
+import { getEmployees, deleteEmployee } from '@/services/firebaseService';
 import { Employee } from '@/types';
 import EmployeeForm from '@/components/EmployeeForm';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { employeesService } from '@/services/firebaseService';
+import WeeklyScheduleManager from '@/components/WeeklyScheduleManager';
 import { toast } from 'sonner';
 
-const Employees: React.FC = () => {
+export default function Employees() {
   const [employees, setEmployees] = useState<Employee[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
+  const [filteredEmployees, setFilteredEmployees] = useState<Employee[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
-  const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
-  const [showCredentials, setShowCredentials] = useState(false);
-  const [newCredentials, setNewCredentials] = useState<{ email: string; password: string } | null>(null);
-  const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [showCredentials, setShowCredentials] = useState<{[key: string]: boolean}>({});
 
   useEffect(() => {
     loadEmployees();
   }, []);
 
+  useEffect(() => {
+    const filtered = employees.filter(employee =>
+      employee.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      employee.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      employee.position.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      employee.department.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+    setFilteredEmployees(filtered);
+  }, [employees, searchTerm]);
+
   const loadEmployees = async () => {
     try {
       setLoading(true);
-      const employeesData = await employeesService.getAll();
+      const employeesData = await getEmployees();
       setEmployees(employeesData);
     } catch (error) {
       console.error('Error loading employees:', error);
-      toast.error('Error al cargar empleados');
+      toast.error('Error cargando empleados');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleAddEmployee = async (employeeData: Omit<Employee, 'id'>, password?: string) => {
-    try {
-      if (password) {
-        // Create employee with authentication
-        const { employeeId } = await employeesService.addWithAuth(employeeData, password);
-        const newEmployee = { ...employeeData, id: employeeId };
-        setEmployees([...employees, newEmployee]);
-        
-        // Show credentials to admin
-        setNewCredentials({
-          email: employeeData.email,
-          password: password
-        });
-        setShowCredentials(true);
-        
-        toast.success('Empleado y cuenta creados exitosamente');
-      } else {
-        // Legacy method without authentication
-        const id = await employeesService.add(employeeData);
-        const newEmployee = { ...employeeData, id };
-        setEmployees([...employees, newEmployee]);
-        toast.success('Empleado agregado exitosamente');
-      }
-      setShowForm(false);
-    } catch (error) {
-      console.error('Error adding employee:', error);
-      if (error instanceof Error) {
-        if (error.message.includes('email-already-in-use')) {
-          toast.error('Este correo electrónico ya está registrado');
-        } else if (error.message.includes('weak-password')) {
-          toast.error('La contraseña debe tener al menos 6 caracteres');
-        } else {
-          toast.error('Error al crear empleado: ' + error.message);
-        }
-      } else {
-        toast.error('Error al agregar empleado');
+  const handleDelete = async (id: string) => {
+    if (window.confirm('¿Estás seguro de que quieres eliminar este empleado?')) {
+      try {
+        await deleteEmployee(id);
+        toast.success('Empleado eliminado correctamente');
+        loadEmployees();
+      } catch (error) {
+        console.error('Error deleting employee:', error);
+        toast.error('Error eliminando empleado');
       }
     }
   };
 
-  const handleEditEmployee = async (employeeData: Omit<Employee, 'id'>) => {
-    if (!editingEmployee) return;
-    
-    try {
-      await employeesService.update(editingEmployee.id, employeeData);
-      const updatedEmployees = employees.map(emp => 
-        emp.id === editingEmployee.id 
-          ? { ...employeeData, id: editingEmployee.id }
-          : emp
-      );
-      setEmployees(updatedEmployees);
-      setEditingEmployee(null);
-      setShowForm(false);
-      toast.success('Empleado actualizado exitosamente');
-    } catch (error) {
-      console.error('Error updating employee:', error);
-      toast.error('Error al actualizar empleado');
-    }
-  };
-
-  const handleDeleteEmployee = async (id: string) => {
-    if (!confirm('¿Estás seguro de que deseas eliminar este empleado? Esta acción también eliminará su cuenta de acceso.')) return;
-    
-    try {
-      await employeesService.delete(id);
-      setEmployees(employees.filter(emp => emp.id !== id));
-      toast.success('Empleado eliminado exitosamente');
-    } catch (error) {
-      console.error('Error deleting employee:', error);
-      toast.error('Error al eliminar empleado');
-    }
-  };
-
-  const openEditForm = (employee: Employee) => {
-    setEditingEmployee(employee);
-    setShowForm(true);
-  };
-
-  const closeForm = () => {
-    setShowForm(false);
+  const handleFormSuccess = () => {
+    setIsFormOpen(false);
     setEditingEmployee(null);
+    loadEmployees();
   };
 
-  const copyToClipboard = async (text: string, field: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedField(field);
-      setTimeout(() => setCopiedField(null), 2000);
-      toast.success('Copiado al portapapeles');
-    } catch (error) {
-      toast.error('Error al copiar');
-    }
-  };
-
-  const calculateWorkedTime = (startDate: string) => {
-    const start = new Date(startDate);
-    const now = new Date();
-    const diffTime = Math.abs(now.getTime() - start.getTime());
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    const months = Math.floor(diffDays / 30);
-    const years = Math.floor(months / 12);
-    
-    if (years > 0) {
-      return `${years} año${years > 1 ? 's' : ''} ${months % 12} mes${months % 12 !== 1 ? 'es' : ''}`;
-    }
-    return `${months} mes${months !== 1 ? 'es' : ''}`;
+  const toggleCredentials = (employeeId: string) => {
+    setShowCredentials(prev => ({
+      ...prev,
+      [employeeId]: !prev[employeeId]
+    }));
   };
 
   if (loading) {
     return (
-      <div className="p-6 flex items-center justify-center min-h-96">
-        <div className="flex items-center space-x-2">
-          <Loader2 className="h-6 w-6 animate-spin" />
-          <span>Cargando empleados...</span>
-        </div>
+      <div className="flex items-center justify-center h-64">
+        <div className="text-lg">Cargando empleados...</div>
       </div>
     );
   }
 
   return (
-    <div className="p-6">
-      <div className="flex justify-between items-center mb-6">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Gestión de Empleados</h1>
-          <p className="text-gray-600">Administra la información de todos los empleados</p>
-        </div>
-        <Button onClick={() => setShowForm(true)} className="flex items-center space-x-2">
-          <Plus className="h-4 w-4" />
-          <span>Nuevo Empleado</span>
-        </Button>
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-3xl font-bold">Empleados</h1>
+        <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}>
+          <DialogTrigger asChild>
+            <Button onClick={() => setEditingEmployee(null)}>
+              <Plus className="h-4 w-4 mr-2" />
+              Nuevo Empleado
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>
+                {editingEmployee ? 'Editar Empleado' : 'Nuevo Empleado'}
+              </DialogTitle>
+            </DialogHeader>
+            <EmployeeForm
+              employee={editingEmployee}
+              onSuccess={handleFormSuccess}
+              onCancel={() => {
+                setIsFormOpen(false);
+                setEditingEmployee(null);
+              }}
+            />
+          </DialogContent>
+        </Dialog>
       </div>
 
-      {employees.length === 0 ? (
-        <Card className="p-8 text-center">
+      {/* Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Total Empleados</CardTitle>
+            <Users className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              <Users className="h-12 w-12 mx-auto text-gray-400" />
-              <div>
-                <h3 className="text-lg font-medium">No hay empleados registrados</h3>
-                <p className="text-gray-600">Comienza agregando tu primer empleado</p>
-              </div>
-              <Button onClick={() => setShowForm(true)}>
-                <Plus className="h-4 w-4 mr-2" />
-                Agregar Empleado
-              </Button>
+            <div className="text-2xl font-bold">{employees.length}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Departamentos</CardTitle>
+            <Users className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">
+              {new Set(employees.map(e => e.department)).size}
             </div>
           </CardContent>
         </Card>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {employees.map((employee) => (
-            <Card key={employee.id} className="hover:shadow-lg transition-shadow">
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-3">
-                    <div 
-                      className="w-4 h-4 rounded-full"
-                      style={{ backgroundColor: employee.color }}
-                    />
-                    <div>
-                      <CardTitle className="text-lg">{employee.name}</CardTitle>
-                      <CardDescription className="capitalize">{employee.role}</CardDescription>
-                    </div>
-                  </div>
-                  <Badge variant={employee.status === 'activo' ? 'default' : 'secondary'}>
-                    {employee.status}
-                  </Badge>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  <div>
-                    <p className="text-sm font-medium text-gray-600">Fecha de Ingreso</p>
-                    <p className="text-sm">{new Date(employee.startDate).toLocaleDateString('es-CR')}</p>
-                    <p className="text-xs text-gray-500">{calculateWorkedTime(employee.startDate)}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-gray-600">Tarifa por Hora</p>
-                    <p className="text-lg font-semibold text-green-600">₡{employee.hourlyRate.toLocaleString()}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-gray-600">Email</p>
-                    <p className="text-sm">{employee.email}</p>
-                  </div>
-                </div>
-                
-                <div className="flex justify-between mt-4 pt-4 border-t">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setSelectedEmployee(employee)}
-                    className="flex items-center space-x-1"
-                  >
-                    <Eye className="h-3 w-3" />
-                    <span>Ver</span>
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => openEditForm(employee)}
-                    className="flex items-center space-x-1"
-                  >
-                    <Edit className="h-3 w-3" />
-                    <span>Editar</span>
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleDeleteEmployee(employee.id)}
-                    className="flex items-center space-x-1 text-red-600 hover:text-red-700"
-                  >
-                    <Trash2 className="h-3 w-3" />
-                    <span>Eliminar</span>
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Nuevos este mes</CardTitle>
+            <Users className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">
+              {employees.filter(e => {
+                const now = new Date();
+                const hireDate = new Date(e.hireDate);
+                return hireDate.getMonth() === now.getMonth() && 
+                       hireDate.getFullYear() === now.getFullYear();
+              }).length}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
 
-      {/* Formulario de empleado */}
-      {showForm && (
-        <EmployeeForm
-          employee={editingEmployee}
-          onSubmit={editingEmployee ? handleEditEmployee : handleAddEmployee}
-          onCancel={closeForm}
-        />
-      )}
+      {/* Search */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center space-x-2">
+            <Search className="h-4 w-4" />
+            <Input
+              placeholder="Buscar empleados..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="max-w-sm"
+            />
+          </div>
+        </CardHeader>
+      </Card>
 
-      {/* Modal de credenciales */}
-      <Dialog open={showCredentials} onOpenChange={setShowCredentials}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Credenciales del Empleado</DialogTitle>
-          </DialogHeader>
-          {newCredentials && (
-            <div className="space-y-4">
-              <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
-                <p className="text-sm text-green-800 mb-3">
-                  ✅ Empleado creado exitosamente. Comparte estas credenciales con el empleado:
-                </p>
-                
-                <div className="space-y-3">
-                  <div>
-                    <label className="text-xs font-medium text-gray-600">Email:</label>
-                    <div className="flex items-center space-x-2 mt-1">
-                      <code className="flex-1 p-2 bg-gray-100 rounded text-sm">{newCredentials.email}</code>
+      {/* Employees Table */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Lista de Empleados</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Nombre</TableHead>
+                <TableHead>Email</TableHead>
+                <TableHead>Posición</TableHead>
+                <TableHead>Departamento</TableHead>
+                <TableHead>Salario</TableHead>
+                <TableHead>Fecha de Contratación</TableHead>
+                <TableHead>Credenciales</TableHead>
+                <TableHead>Acciones</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredEmployees.map((employee) => (
+                <TableRow key={employee.id}>
+                  <TableCell className="font-medium">{employee.name}</TableCell>
+                  <TableCell>{employee.email}</TableCell>
+                  <TableCell>
+                    <Badge variant="secondary">{employee.position}</Badge>
+                  </TableCell>
+                  <TableCell>{employee.department}</TableCell>
+                  <TableCell>${employee.salary.toLocaleString()}</TableCell>
+                  <TableCell>{new Date(employee.hireDate).toLocaleDateString()}</TableCell>
+                  <TableCell>
+                    <div className="flex items-center space-x-2">
                       <Button
+                        variant="ghost"
                         size="sm"
-                        variant="outline"
-                        onClick={() => copyToClipboard(newCredentials.email, 'email')}
+                        onClick={() => toggleCredentials(employee.id)}
                       >
-                        {copiedField === 'email' ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                        {showCredentials[employee.id] ? (
+                          <EyeOff className="h-4 w-4" />
+                        ) : (
+                          <Eye className="h-4 w-4" />
+                        )}
+                      </Button>
+                      {showCredentials[employee.id] && (
+                        <div className="text-xs">
+                          <div>Email: {employee.email}</div>
+                          <div>Password: ********</div>
+                        </div>
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center space-x-2">
+                      <WeeklyScheduleManager 
+                        employeeId={employee.id} 
+                        employeeName={employee.name} 
+                      />
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setEditingEmployee(employee);
+                          setIsFormOpen(true);
+                        }}
+                      >
+                        <Edit className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleDelete(employee.id)}
+                      >
+                        <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>
-                  </div>
-                  
-                  <div>
-                    <label className="text-xs font-medium text-gray-600">Contraseña:</label>
-                    <div className="flex items-center space-x-2 mt-1">
-                      <code className="flex-1 p-2 bg-gray-100 rounded text-sm">{newCredentials.password}</code>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => copyToClipboard(newCredentials.password, 'password')}
-                      >
-                        {copiedField === 'password' ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-                
-                <p className="text-xs text-gray-600 mt-3">
-                  💡 El empleado puede usar estas credenciales para acceder a su panel personal.
-                </p>
-              </div>
-              
-              <Button 
-                onClick={() => {
-                  setShowCredentials(false);
-                  setNewCredentials(null);
-                }}
-                className="w-full"
-              >
-                Entendido
-              </Button>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      {/* Modal de detalles del empleado */}
-      <Dialog open={!!selectedEmployee} onOpenChange={() => setSelectedEmployee(null)}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Detalles del Empleado</DialogTitle>
-          </DialogHeader>
-          {selectedEmployee && (
-            <div className="space-y-4">
-              <div className="flex items-center space-x-3">
-                <div 
-                  className="w-6 h-6 rounded-full"
-                  style={{ backgroundColor: selectedEmployee.color }}
-                />
-                <div>
-                  <h3 className="font-semibold">{selectedEmployee.name}</h3>
-                  <p className="text-sm text-gray-600 capitalize">{selectedEmployee.role}</p>
-                </div>
-              </div>
-              
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <div>
-                  <p className="font-medium text-gray-600">Tiempo Laborado</p>
-                  <p>{calculateWorkedTime(selectedEmployee.startDate)}</p>
-                </div>
-                <div>
-                  <p className="font-medium text-gray-600">Estado</p>
-                  <Badge variant={selectedEmployee.status === 'activo' ? 'default' : 'secondary'}>
-                    {selectedEmployee.status}
-                  </Badge>
-                </div>
-                <div>
-                  <p className="font-medium text-gray-600">Tarifa/Hora</p>
-                  <p className="font-semibold text-green-600">₡{selectedEmployee.hourlyRate.toLocaleString()}</p>
-                </div>
-                <div>
-                  <p className="font-medium text-gray-600">Email</p>
-                  <p>{selectedEmployee.email}</p>
-                </div>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
     </div>
   );
-};
-
-export default Employees;
+}
