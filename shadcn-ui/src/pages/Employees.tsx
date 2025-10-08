@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Edit, Trash2, Eye, Loader2 } from 'lucide-react';
+import { Plus, Edit, Trash2, Eye, Loader2, Users } from 'lucide-react';
 import { Employee } from '@/types';
 import EmployeeForm from '@/components/EmployeeForm';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
