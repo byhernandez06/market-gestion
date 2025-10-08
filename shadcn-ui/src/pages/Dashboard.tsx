@@ -3,43 +3,88 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Calendar, Clock, Plane, Users } from 'lucide-react';
+import { Calendar, Clock, Plane, Users, Loader2 } from 'lucide-react';
 import { Employee, Vacation, Extra } from '@/types';
+import { dashboardService } from '@/services/firebaseService';
+import { toast } from 'sonner';
+
+interface DashboardStats {
+  totalEmployees: number;
+  activeEmployees: number;
+  pendingVacations: number;
+  monthlyExtraHours: number;
+  monthlyExtraAmount: number;
+  employees: Employee[];
+  recentActivity: Array<{
+    type: string;
+    message: string;
+    employee: string;
+    date: string;
+  }>;
+}
 
 const Dashboard: React.FC = () => {
   const { currentUser } = useAuth();
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [loading, setLoading] = useState(true);
   const [employee, setEmployee] = useState<Employee | null>(null);
-  const [vacationDays, setVacationDays] = useState(0);
-  const [monthlyExtras, setMonthlyExtras] = useState(0);
-  const [weeklyHours, setWeeklyHours] = useState(0);
 
   useEffect(() => {
-    // Simular datos del empleado actual
-    if (currentUser?.role !== 'admin') {
-      const mockEmployee: Employee = {
-        id: currentUser?.employeeId || '1',
-        name: currentUser?.name || 'Usuario',
-        role: currentUser?.role as 'empleado' | 'refuerzo',
-        color: '#3B82F6',
-        startDate: currentUser?.role === 'empleado' ? '2023-01-15' : '2023-07-01',
-        hourlyRate: currentUser?.role === 'empleado' ? 2500 : 2000,
-        status: 'activo',
-        email: currentUser?.email || ''
-      };
-      setEmployee(mockEmployee);
-
-      // Calcular días de vacaciones disponibles
-      const startDate = new Date(mockEmployee.startDate);
-      const now = new Date();
-      const weeksWorked = Math.floor((now.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24 * 7));
-      const availableDays = Math.floor((weeksWorked / 50) * 14);
-      setVacationDays(availableDays);
-
-      // Datos simulados
-      setMonthlyExtras(currentUser?.role === 'empleado' ? 8 : 0);
-      setWeeklyHours(currentUser?.role === 'refuerzo' ? 35 : 40);
-    }
+    loadDashboardData();
   }, [currentUser]);
+
+  const loadDashboardData = async () => {
+    try {
+      setLoading(true);
+      const dashboardStats = await dashboardService.getStats();
+      setStats(dashboardStats);
+
+      // Si no es admin, buscar datos del empleado actual
+      if (currentUser?.role !== 'admin' && currentUser?.email) {
+        const currentEmployee = dashboardStats.employees.find(
+          emp => emp.email === currentUser.email
+        );
+        setEmployee(currentEmployee || null);
+      }
+    } catch (error) {
+      console.error('Error loading dashboard:', error);
+      toast.error('Error al cargar dashboard');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const calculateWorkedTime = (startDate: string) => {
+    const start = new Date(startDate);
+    const now = new Date();
+    const diffTime = Math.abs(now.getTime() - start.getTime());
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    const months = Math.floor(diffDays / 30);
+    const years = Math.floor(months / 12);
+    
+    if (years > 0) {
+      return `${years} año${years > 1 ? 's' : ''} ${months % 12} mes${months % 12 !== 1 ? 'es' : ''}`;
+    }
+    return `${months} mes${months !== 1 ? 'es' : ''}`;
+  };
+
+  const calculateVacationDays = (startDate: string) => {
+    const start = new Date(startDate);
+    const now = new Date();
+    const weeksWorked = Math.floor((now.getTime() - start.getTime()) / (1000 * 60 * 60 * 24 * 7));
+    return Math.floor((weeksWorked / 50) * 14);
+  };
+
+  if (loading) {
+    return (
+      <div className="p-6 flex items-center justify-center min-h-96">
+        <div className="flex items-center space-x-2">
+          <Loader2 className="h-6 w-6 animate-spin" />
+          <span>Cargando dashboard...</span>
+        </div>
+      </div>
+    );
+  }
 
   if (currentUser?.role === 'admin') {
     return (
@@ -56,8 +101,10 @@ const Dashboard: React.FC = () => {
               <Users className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">4</div>
-              <p className="text-xs text-muted-foreground">2 empleados, 2 refuerzos</p>
+              <div className="text-2xl font-bold">{stats?.totalEmployees || 0}</div>
+              <p className="text-xs text-muted-foreground">
+                {stats?.activeEmployees || 0} activos
+              </p>
             </CardContent>
           </Card>
 
@@ -67,7 +114,7 @@ const Dashboard: React.FC = () => {
               <Plane className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">2</div>
+              <div className="text-2xl font-bold">{stats?.pendingVacations || 0}</div>
               <p className="text-xs text-muted-foreground">Solicitudes por aprobar</p>
             </CardContent>
           </Card>
@@ -78,19 +125,21 @@ const Dashboard: React.FC = () => {
               <Clock className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">24</div>
-              <p className="text-xs text-muted-foreground">₡60,000 total</p>
+              <div className="text-2xl font-bold">{stats?.monthlyExtraHours || 0}</div>
+              <p className="text-xs text-muted-foreground">
+                ₡{stats?.monthlyExtraAmount?.toLocaleString() || '0'} total
+              </p>
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Horarios Activos</CardTitle>
+              <CardTitle className="text-sm font-medium">Empleados Activos</CardTitle>
               <Calendar className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">4</div>
-              <p className="text-xs text-muted-foreground">Empleados programados</p>
+              <div className="text-2xl font-bold">{stats?.activeEmployees || 0}</div>
+              <p className="text-xs text-muted-foreground">Empleados trabajando</p>
             </CardContent>
           </Card>
         </div>
@@ -102,20 +151,23 @@ const Dashboard: React.FC = () => {
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-medium">Deylin Rodríguez</p>
-                    <p className="text-sm text-gray-600">Empleado • ₡2,500/hora</p>
+                {stats?.employees?.filter(emp => emp.status === 'activo').map(employee => (
+                  <div key={employee.id} className="flex items-center justify-between">
+                    <div className="flex items-center space-x-3">
+                      <div 
+                        className="w-3 h-3 rounded-full"
+                        style={{ backgroundColor: employee.color }}
+                      />
+                      <div>
+                        <p className="font-medium">{employee.name}</p>
+                        <p className="text-sm text-gray-600 capitalize">
+                          {employee.role} • ₡{employee.hourlyRate.toLocaleString()}/hora
+                        </p>
+                      </div>
+                    </div>
+                    <Badge variant="secondary">Activo</Badge>
                   </div>
-                  <Badge variant="secondary">Activo</Badge>
-                </div>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-medium">Anais López</p>
-                    <p className="text-sm text-gray-600">Refuerzo • ₡2,000/hora</p>
-                  </div>
-                  <Badge variant="secondary">Activo</Badge>
-                </div>
+                ))}
               </div>
             </CardContent>
           </Card>
@@ -126,18 +178,18 @@ const Dashboard: React.FC = () => {
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
-                <div className="text-sm">
-                  <p className="font-medium">Solicitud de vacaciones</p>
-                  <p className="text-gray-600">Deylin solicitó vacaciones del 15-20 dic</p>
-                </div>
-                <div className="text-sm">
-                  <p className="font-medium">Horas extra registradas</p>
-                  <p className="text-gray-600">Anais trabajó 3 horas extra ayer</p>
-                </div>
-                <div className="text-sm">
-                  <p className="font-medium">Horario actualizado</p>
-                  <p className="text-gray-600">Cambio en turno de mañana</p>
-                </div>
+                {stats?.recentActivity?.length ? (
+                  stats.recentActivity.map((activity, index) => (
+                    <div key={index} className="text-sm">
+                      <p className="font-medium">{activity.message}</p>
+                      <p className="text-gray-600">
+                        {activity.employee} - {new Date(activity.date).toLocaleDateString('es-CR')}
+                      </p>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-gray-500 text-center py-4">No hay actividad reciente</p>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -171,6 +223,7 @@ const Dashboard: React.FC = () => {
               <div>
                 <p className="text-sm font-medium text-gray-600">Fecha de Ingreso</p>
                 <p>{new Date(employee.startDate).toLocaleDateString('es-CR')}</p>
+                <p className="text-xs text-gray-500">{calculateWorkedTime(employee.startDate)}</p>
               </div>
               <div>
                 <p className="text-sm font-medium text-gray-600">Tarifa por Hora</p>
@@ -189,7 +242,9 @@ const Dashboard: React.FC = () => {
                   <Plane className="h-5 w-5 text-blue-600" />
                   <span>Días de Vacaciones</span>
                 </div>
-                <span className="font-semibold">{vacationDays} disponibles</span>
+                <span className="font-semibold">
+                  {calculateVacationDays(employee.startDate)} disponibles
+                </span>
               </div>
 
               {employee.role === 'empleado' && (
@@ -198,25 +253,15 @@ const Dashboard: React.FC = () => {
                     <Clock className="h-5 w-5 text-green-600" />
                     <span>Horas Extra (Mes)</span>
                   </div>
-                  <span className="font-semibold">{monthlyExtras} horas</span>
-                </div>
-              )}
-
-              {employee.role === 'refuerzo' && (
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-2">
-                    <Clock className="h-5 w-5 text-purple-600" />
-                    <span>Horas Semanales</span>
-                  </div>
-                  <span className="font-semibold">{weeklyHours} horas</span>
+                  <span className="font-semibold">0 horas</span>
                 </div>
               )}
 
               <div className="pt-3 border-t">
                 <div className="flex items-center justify-between">
-                  <span>Ingresos Estimados (Mes)</span>
+                  <span>Salario Base Estimado</span>
                   <span className="text-lg font-bold text-green-600">
-                    ₡{((weeklyHours * 4 + monthlyExtras) * employee.hourlyRate).toLocaleString()}
+                    ₡{(160 * employee.hourlyRate).toLocaleString()}
                   </span>
                 </div>
               </div>

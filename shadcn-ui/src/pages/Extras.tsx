@@ -7,14 +7,17 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Plus, Clock, DollarSign, Calendar } from 'lucide-react';
+import { Plus, Clock, DollarSign, Calendar, Loader2 } from 'lucide-react';
 import { Employee, Extra } from '@/types';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
+import { employeesService, extrasService } from '@/services/firebaseService';
+import { toast } from 'sonner';
 
 const Extras: React.FC = () => {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [extras, setExtras] = useState<Extra[]>([]);
+  const [loading, setLoading] = useState(true);
   const [showExtraForm, setShowExtraForm] = useState(false);
   const [extraData, setExtraData] = useState({
     employeeId: '',
@@ -24,104 +27,59 @@ const Extras: React.FC = () => {
   });
 
   useEffect(() => {
-    // Datos ficticios de empleados (solo empleados fijos)
-    const mockEmployees: Employee[] = [
-      {
-        id: '1',
-        name: 'Byron Administrador',
-        role: 'empleado',
-        color: '#3B82F6',
-        startDate: '2022-01-01',
-        hourlyRate: 3000,
-        status: 'activo',
-        email: 'byron@minisuper.com'
-      },
-      {
-        id: '2',
-        name: 'Dayana Administradora',
-        role: 'empleado',
-        color: '#EF4444',
-        startDate: '2022-01-01',
-        hourlyRate: 3000,
-        status: 'activo',
-        email: 'dayana@minisuper.com'
-      },
-      {
-        id: '3',
-        name: 'Deylin Rodríguez',
-        role: 'empleado',
-        color: '#10B981',
-        startDate: '2023-01-15',
-        hourlyRate: 2500,
-        status: 'activo',
-        email: 'deylin@minisuper.com'
-      }
-    ];
-
-    // Horas extra ficticias
-    const mockExtras: Extra[] = [
-      {
-        id: '1',
-        employeeId: '3',
-        date: '2024-10-01',
-        hours: 3,
-        amount: 7500,
-        description: 'Inventario mensual'
-      },
-      {
-        id: '2',
-        employeeId: '3',
-        date: '2024-10-03',
-        hours: 2,
-        amount: 5000,
-        description: 'Atención de emergencia'
-      },
-      {
-        id: '3',
-        employeeId: '1',
-        date: '2024-10-02',
-        hours: 4,
-        amount: 12000,
-        description: 'Cierre de mes'
-      },
-      {
-        id: '4',
-        employeeId: '2',
-        date: '2024-09-28',
-        hours: 2,
-        amount: 6000,
-        description: 'Capacitación de personal'
-      }
-    ];
-
-    setEmployees(mockEmployees);
-    setExtras(mockExtras);
+    loadData();
   }, []);
 
-  const handleAddExtra = () => {
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      const [employeesData, extrasData] = await Promise.all([
+        employeesService.getAll(),
+        extrasService.getAll()
+      ]);
+      // Solo empleados fijos pueden tener horas extra
+      setEmployees(employeesData.filter(emp => emp.role === 'empleado'));
+      setExtras(extrasData);
+    } catch (error) {
+      console.error('Error loading data:', error);
+      toast.error('Error al cargar datos');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAddExtra = async () => {
     if (!extraData.employeeId || !extraData.date || !extraData.hours) {
-      alert('Por favor completa todos los campos requeridos');
+      toast.error('Por favor completa todos los campos requeridos');
       return;
     }
 
     const employee = employees.find(emp => emp.id === extraData.employeeId);
     if (!employee) return;
 
-    const hours = parseFloat(extraData.hours);
-    const amount = hours * employee.hourlyRate;
+    try {
+      const hours = parseFloat(extraData.hours);
+      const amount = hours * employee.hourlyRate;
 
-    const newExtra: Extra = {
-      id: Date.now().toString(),
-      employeeId: extraData.employeeId,
-      date: extraData.date,
-      hours,
-      amount,
-      description: extraData.description
-    };
+      const newExtra: Omit<Extra, 'id'> = {
+        employeeId: extraData.employeeId,
+        date: extraData.date,
+        hours,
+        amount,
+        description: extraData.description
+      };
 
-    setExtras([...extras, newExtra]);
-    setShowExtraForm(false);
-    setExtraData({ employeeId: '', date: '', hours: '', description: '' });
+      const id = await extrasService.add(newExtra);
+      const extraWithId = { ...newExtra, id };
+      setExtras([extraWithId, ...extras]);
+      
+      setShowExtraForm(false);
+      setExtraData({ employeeId: '', date: '', hours: '', description: '' });
+      toast.success('Horas extra registradas exitosamente');
+    } catch (error) {
+      console.error('Error adding extra:', error);
+      toast.error('Error al registrar horas extra');
+    }
   };
 
   const getEmployeeName = (employeeId: string) => {
@@ -162,6 +120,17 @@ const Extras: React.FC = () => {
     const now = new Date();
     return extraDate.getMonth() === now.getMonth() && extraDate.getFullYear() === now.getFullYear();
   });
+
+  if (loading) {
+    return (
+      <div className="p-6 flex items-center justify-center min-h-96">
+        <div className="flex items-center space-x-2">
+          <Loader2 className="h-6 w-6 animate-spin" />
+          <span>Cargando horas extra...</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6">

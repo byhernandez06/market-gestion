@@ -6,118 +6,41 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Clock, Trash2 } from 'lucide-react';
+import { Plus, Clock, Trash2, Loader2 } from 'lucide-react';
 import { Employee, Schedule, ScheduleBlock } from '@/types';
 import Calendar from '@/components/Calendar';
+import { employeesService, schedulesService } from '@/services/firebaseService';
+import { toast } from 'sonner';
 
-const Schedule: React.FC = () => {
+const SchedulePage: React.FC = () => {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
+  const [loading, setLoading] = useState(true);
   const [showScheduleForm, setShowScheduleForm] = useState(false);
   const [selectedDate, setSelectedDate] = useState('');
   const [selectedEmployee, setSelectedEmployee] = useState('');
   const [scheduleBlocks, setScheduleBlocks] = useState<ScheduleBlock[]>([]);
 
   useEffect(() => {
-    // Datos ficticios de empleados
-    const mockEmployees: Employee[] = [
-      {
-        id: '1',
-        name: 'Byron Administrador',
-        role: 'empleado',
-        color: '#3B82F6',
-        startDate: '2022-01-01',
-        hourlyRate: 3000,
-        status: 'activo',
-        email: 'byron@minisuper.com'
-      },
-      {
-        id: '2',
-        name: 'Dayana Administradora',
-        role: 'empleado',
-        color: '#EF4444',
-        startDate: '2022-01-01',
-        hourlyRate: 3000,
-        status: 'activo',
-        email: 'dayana@minisuper.com'
-      },
-      {
-        id: '3',
-        name: 'Deylin Rodríguez',
-        role: 'empleado',
-        color: '#10B981',
-        startDate: '2023-01-15',
-        hourlyRate: 2500,
-        status: 'activo',
-        email: 'deylin@minisuper.com'
-      },
-      {
-        id: '4',
-        name: 'Anais López',
-        role: 'refuerzo',
-        color: '#F59E0B',
-        startDate: '2023-07-01',
-        hourlyRate: 2000,
-        status: 'activo',
-        email: 'anais@minisuper.com'
-      }
-    ];
-
-    // Horarios ficticios
-    const mockSchedules: Schedule[] = [
-      {
-        id: '1',
-        employeeId: '3',
-        date: '2024-10-07',
-        blocks: [
-          {
-            id: '1',
-            startTime: '07:00',
-            endTime: '15:00',
-            type: 'regular'
-          }
-        ],
-        totalHours: 8
-      },
-      {
-        id: '2',
-        employeeId: '4',
-        date: '2024-10-07',
-        blocks: [
-          {
-            id: '2',
-            startTime: '15:00',
-            endTime: '21:00',
-            type: 'regular'
-          }
-        ],
-        totalHours: 6
-      },
-      {
-        id: '3',
-        employeeId: '3',
-        date: '2024-10-08',
-        blocks: [
-          {
-            id: '3',
-            startTime: '08:00',
-            endTime: '12:00',
-            type: 'regular'
-          },
-          {
-            id: '4',
-            startTime: '17:00',
-            endTime: '21:00',
-            type: 'regular'
-          }
-        ],
-        totalHours: 8
-      }
-    ];
-
-    setEmployees(mockEmployees);
-    setSchedules(mockSchedules);
+    loadData();
   }, []);
+
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      const [employeesData, schedulesData] = await Promise.all([
+        employeesService.getAll(),
+        schedulesService.getAll()
+      ]);
+      setEmployees(employeesData);
+      setSchedules(schedulesData);
+    } catch (error) {
+      console.error('Error loading data:', error);
+      toast.error('Error al cargar datos');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleDateClick = (date: string) => {
     setSelectedDate(date);
@@ -158,24 +81,32 @@ const Schedule: React.FC = () => {
     }, 0);
   };
 
-  const handleSubmitSchedule = () => {
+  const handleSubmitSchedule = async () => {
     if (!selectedEmployee || !selectedDate || scheduleBlocks.length === 0) {
-      alert('Por favor completa todos los campos');
+      toast.error('Por favor completa todos los campos');
       return;
     }
 
-    const newSchedule: Schedule = {
-      id: Date.now().toString(),
-      employeeId: selectedEmployee,
-      date: selectedDate,
-      blocks: scheduleBlocks,
-      totalHours: calculateTotalHours(scheduleBlocks)
-    };
+    try {
+      const newSchedule: Omit<Schedule, 'id'> = {
+        employeeId: selectedEmployee,
+        date: selectedDate,
+        blocks: scheduleBlocks,
+        totalHours: calculateTotalHours(scheduleBlocks)
+      };
 
-    setSchedules([...schedules, newSchedule]);
-    setShowScheduleForm(false);
-    setSelectedEmployee('');
-    setScheduleBlocks([]);
+      const id = await schedulesService.add(newSchedule);
+      const scheduleWithId = { ...newSchedule, id };
+      setSchedules([...schedules, scheduleWithId]);
+      
+      setShowScheduleForm(false);
+      setSelectedEmployee('');
+      setScheduleBlocks([]);
+      toast.success('Horario guardado exitosamente');
+    } catch (error) {
+      console.error('Error saving schedule:', error);
+      toast.error('Error al guardar horario');
+    }
   };
 
   const closeScheduleForm = () => {
@@ -183,6 +114,17 @@ const Schedule: React.FC = () => {
     setSelectedEmployee('');
     setScheduleBlocks([]);
   };
+
+  if (loading) {
+    return (
+      <div className="p-6 flex items-center justify-center min-h-96">
+        <div className="flex items-center space-x-2">
+          <Loader2 className="h-6 w-6 animate-spin" />
+          <span>Cargando horarios...</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6">
@@ -384,4 +326,4 @@ const Schedule: React.FC = () => {
   );
 };
 
-export default Schedule;
+export default SchedulePage;

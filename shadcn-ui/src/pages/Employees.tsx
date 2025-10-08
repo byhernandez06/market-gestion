@@ -2,75 +2,55 @@ import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Edit, Trash2, Eye } from 'lucide-react';
+import { Plus, Edit, Trash2, Eye, Loader2 } from 'lucide-react';
 import { Employee } from '@/types';
 import EmployeeForm from '@/components/EmployeeForm';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { employeesService } from '@/services/firebaseService';
+import { toast } from 'sonner';
 
 const Employees: React.FC = () => {
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
 
   useEffect(() => {
-    // Datos ficticios de empleados
-    const mockEmployees: Employee[] = [
-      {
-        id: '1',
-        name: 'Byron Administrador',
-        role: 'empleado',
-        color: '#3B82F6',
-        startDate: '2022-01-01',
-        hourlyRate: 3000,
-        status: 'activo',
-        email: 'byron@minisuper.com'
-      },
-      {
-        id: '2',
-        name: 'Dayana Administradora',
-        role: 'empleado',
-        color: '#EF4444',
-        startDate: '2022-01-01',
-        hourlyRate: 3000,
-        status: 'activo',
-        email: 'dayana@minisuper.com'
-      },
-      {
-        id: '3',
-        name: 'Deylin Rodríguez',
-        role: 'empleado',
-        color: '#10B981',
-        startDate: '2023-01-15',
-        hourlyRate: 2500,
-        status: 'activo',
-        email: 'deylin@minisuper.com'
-      },
-      {
-        id: '4',
-        name: 'Anais López',
-        role: 'refuerzo',
-        color: '#F59E0B',
-        startDate: '2023-07-01',
-        hourlyRate: 2000,
-        status: 'activo',
-        email: 'anais@minisuper.com'
-      }
-    ];
-    setEmployees(mockEmployees);
+    loadEmployees();
   }, []);
 
-  const handleAddEmployee = (employeeData: Omit<Employee, 'id'>) => {
-    const newEmployee: Employee = {
-      ...employeeData,
-      id: Date.now().toString()
-    };
-    setEmployees([...employees, newEmployee]);
-    setShowForm(false);
+  const loadEmployees = async () => {
+    try {
+      setLoading(true);
+      const employeesData = await employeesService.getAll();
+      setEmployees(employeesData);
+    } catch (error) {
+      console.error('Error loading employees:', error);
+      toast.error('Error al cargar empleados');
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleEditEmployee = (employeeData: Omit<Employee, 'id'>) => {
-    if (editingEmployee) {
+  const handleAddEmployee = async (employeeData: Omit<Employee, 'id'>) => {
+    try {
+      const id = await employeesService.add(employeeData);
+      const newEmployee = { ...employeeData, id };
+      setEmployees([...employees, newEmployee]);
+      setShowForm(false);
+      toast.success('Empleado agregado exitosamente');
+    } catch (error) {
+      console.error('Error adding employee:', error);
+      toast.error('Error al agregar empleado');
+    }
+  };
+
+  const handleEditEmployee = async (employeeData: Omit<Employee, 'id'>) => {
+    if (!editingEmployee) return;
+    
+    try {
+      await employeesService.update(editingEmployee.id, employeeData);
       const updatedEmployees = employees.map(emp => 
         emp.id === editingEmployee.id 
           ? { ...employeeData, id: editingEmployee.id }
@@ -79,12 +59,23 @@ const Employees: React.FC = () => {
       setEmployees(updatedEmployees);
       setEditingEmployee(null);
       setShowForm(false);
+      toast.success('Empleado actualizado exitosamente');
+    } catch (error) {
+      console.error('Error updating employee:', error);
+      toast.error('Error al actualizar empleado');
     }
   };
 
-  const handleDeleteEmployee = (id: string) => {
-    if (confirm('¿Estás seguro de que deseas eliminar este empleado?')) {
+  const handleDeleteEmployee = async (id: string) => {
+    if (!confirm('¿Estás seguro de que deseas eliminar este empleado?')) return;
+    
+    try {
+      await employeesService.delete(id);
       setEmployees(employees.filter(emp => emp.id !== id));
+      toast.success('Empleado eliminado exitosamente');
+    } catch (error) {
+      console.error('Error deleting employee:', error);
+      toast.error('Error al eliminar empleado');
     }
   };
 
@@ -112,6 +103,17 @@ const Employees: React.FC = () => {
     return `${months} mes${months !== 1 ? 'es' : ''}`;
   };
 
+  if (loading) {
+    return (
+      <div className="p-6 flex items-center justify-center min-h-96">
+        <div className="flex items-center space-x-2">
+          <Loader2 className="h-6 w-6 animate-spin" />
+          <span>Cargando empleados...</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="p-6">
       <div className="flex justify-between items-center mb-6">
@@ -125,76 +127,94 @@ const Employees: React.FC = () => {
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {employees.map((employee) => (
-          <Card key={employee.id} className="hover:shadow-lg transition-shadow">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-3">
-                  <div 
-                    className="w-4 h-4 rounded-full"
-                    style={{ backgroundColor: employee.color }}
-                  />
+      {employees.length === 0 ? (
+        <Card className="p-8 text-center">
+          <CardContent>
+            <div className="space-y-4">
+              <Users className="h-12 w-12 mx-auto text-gray-400" />
+              <div>
+                <h3 className="text-lg font-medium">No hay empleados registrados</h3>
+                <p className="text-gray-600">Comienza agregando tu primer empleado</p>
+              </div>
+              <Button onClick={() => setShowForm(true)}>
+                <Plus className="h-4 w-4 mr-2" />
+                Agregar Empleado
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {employees.map((employee) => (
+            <Card key={employee.id} className="hover:shadow-lg transition-shadow">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-3">
+                    <div 
+                      className="w-4 h-4 rounded-full"
+                      style={{ backgroundColor: employee.color }}
+                    />
+                    <div>
+                      <CardTitle className="text-lg">{employee.name}</CardTitle>
+                      <CardDescription className="capitalize">{employee.role}</CardDescription>
+                    </div>
+                  </div>
+                  <Badge variant={employee.status === 'activo' ? 'default' : 'secondary'}>
+                    {employee.status}
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
                   <div>
-                    <CardTitle className="text-lg">{employee.name}</CardTitle>
-                    <CardDescription className="capitalize">{employee.role}</CardDescription>
+                    <p className="text-sm font-medium text-gray-600">Fecha de Ingreso</p>
+                    <p className="text-sm">{new Date(employee.startDate).toLocaleDateString('es-CR')}</p>
+                    <p className="text-xs text-gray-500">{calculateWorkedTime(employee.startDate)}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-600">Tarifa por Hora</p>
+                    <p className="text-lg font-semibold text-green-600">₡{employee.hourlyRate.toLocaleString()}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-600">Email</p>
+                    <p className="text-sm">{employee.email}</p>
                   </div>
                 </div>
-                <Badge variant={employee.status === 'activo' ? 'default' : 'secondary'}>
-                  {employee.status}
-                </Badge>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Fecha de Ingreso</p>
-                  <p className="text-sm">{new Date(employee.startDate).toLocaleDateString('es-CR')}</p>
-                  <p className="text-xs text-gray-500">{calculateWorkedTime(employee.startDate)}</p>
+                
+                <div className="flex justify-between mt-4 pt-4 border-t">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setSelectedEmployee(employee)}
+                    className="flex items-center space-x-1"
+                  >
+                    <Eye className="h-3 w-3" />
+                    <span>Ver</span>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => openEditForm(employee)}
+                    className="flex items-center space-x-1"
+                  >
+                    <Edit className="h-3 w-3" />
+                    <span>Editar</span>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleDeleteEmployee(employee.id)}
+                    className="flex items-center space-x-1 text-red-600 hover:text-red-700"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                    <span>Eliminar</span>
+                  </Button>
                 </div>
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Tarifa por Hora</p>
-                  <p className="text-lg font-semibold text-green-600">₡{employee.hourlyRate.toLocaleString()}</p>
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Email</p>
-                  <p className="text-sm">{employee.email}</p>
-                </div>
-              </div>
-              
-              <div className="flex justify-between mt-4 pt-4 border-t">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setSelectedEmployee(employee)}
-                  className="flex items-center space-x-1"
-                >
-                  <Eye className="h-3 w-3" />
-                  <span>Ver</span>
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => openEditForm(employee)}
-                  className="flex items-center space-x-1"
-                >
-                  <Edit className="h-3 w-3" />
-                  <span>Editar</span>
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleDeleteEmployee(employee.id)}
-                  className="flex items-center space-x-1 text-red-600 hover:text-red-700"
-                >
-                  <Trash2 className="h-3 w-3" />
-                  <span>Eliminar</span>
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
 
       {/* Formulario de empleado */}
       {showForm && (
@@ -242,26 +262,6 @@ const Employees: React.FC = () => {
                 <div>
                   <p className="font-medium text-gray-600">Email</p>
                   <p>{selectedEmployee.email}</p>
-                </div>
-              </div>
-
-              <div className="pt-4 border-t">
-                <h4 className="font-medium mb-2">Resumen del Mes</h4>
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span>Horas Trabajadas:</span>
-                    <span className="font-medium">160 hrs</span>
-                  </div>
-                  {selectedEmployee.role === 'empleado' && (
-                    <div className="flex justify-between">
-                      <span>Horas Extra:</span>
-                      <span className="font-medium">8 hrs</span>
-                    </div>
-                  )}
-                  <div className="flex justify-between">
-                    <span>Días de Vacaciones:</span>
-                    <span className="font-medium">12 disponibles</span>
-                  </div>
                 </div>
               </div>
             </div>
