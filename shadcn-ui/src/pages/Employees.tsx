@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Edit, Trash2, Eye, Loader2, Users } from 'lucide-react';
+import { Plus, Edit, Trash2, Eye, Loader2, Users, Copy, Check } from 'lucide-react';
 import { Employee } from '@/types';
 import EmployeeForm from '@/components/EmployeeForm';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -15,6 +15,9 @@ const Employees: React.FC = () => {
   const [showForm, setShowForm] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
+  const [showCredentials, setShowCredentials] = useState(false);
+  const [newCredentials, setNewCredentials] = useState<{ email: string; password: string } | null>(null);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
 
   useEffect(() => {
     loadEmployees();
@@ -33,16 +36,43 @@ const Employees: React.FC = () => {
     }
   };
 
-  const handleAddEmployee = async (employeeData: Omit<Employee, 'id'>) => {
+  const handleAddEmployee = async (employeeData: Omit<Employee, 'id'>, password?: string) => {
     try {
-      const id = await employeesService.add(employeeData);
-      const newEmployee = { ...employeeData, id };
-      setEmployees([...employees, newEmployee]);
+      if (password) {
+        // Create employee with authentication
+        const { employeeId } = await employeesService.addWithAuth(employeeData, password);
+        const newEmployee = { ...employeeData, id: employeeId };
+        setEmployees([...employees, newEmployee]);
+        
+        // Show credentials to admin
+        setNewCredentials({
+          email: employeeData.email,
+          password: password
+        });
+        setShowCredentials(true);
+        
+        toast.success('Empleado y cuenta creados exitosamente');
+      } else {
+        // Legacy method without authentication
+        const id = await employeesService.add(employeeData);
+        const newEmployee = { ...employeeData, id };
+        setEmployees([...employees, newEmployee]);
+        toast.success('Empleado agregado exitosamente');
+      }
       setShowForm(false);
-      toast.success('Empleado agregado exitosamente');
     } catch (error) {
       console.error('Error adding employee:', error);
-      toast.error('Error al agregar empleado');
+      if (error instanceof Error) {
+        if (error.message.includes('email-already-in-use')) {
+          toast.error('Este correo electrónico ya está registrado');
+        } else if (error.message.includes('weak-password')) {
+          toast.error('La contraseña debe tener al menos 6 caracteres');
+        } else {
+          toast.error('Error al crear empleado: ' + error.message);
+        }
+      } else {
+        toast.error('Error al agregar empleado');
+      }
     }
   };
 
@@ -67,7 +97,7 @@ const Employees: React.FC = () => {
   };
 
   const handleDeleteEmployee = async (id: string) => {
-    if (!confirm('¿Estás seguro de que deseas eliminar este empleado?')) return;
+    if (!confirm('¿Estás seguro de que deseas eliminar este empleado? Esta acción también eliminará su cuenta de acceso.')) return;
     
     try {
       await employeesService.delete(id);
@@ -87,6 +117,17 @@ const Employees: React.FC = () => {
   const closeForm = () => {
     setShowForm(false);
     setEditingEmployee(null);
+  };
+
+  const copyToClipboard = async (text: string, field: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedField(field);
+      setTimeout(() => setCopiedField(null), 2000);
+      toast.success('Copiado al portapapeles');
+    } catch (error) {
+      toast.error('Error al copiar');
+    }
   };
 
   const calculateWorkedTime = (startDate: string) => {
@@ -224,6 +265,68 @@ const Employees: React.FC = () => {
           onCancel={closeForm}
         />
       )}
+
+      {/* Modal de credenciales */}
+      <Dialog open={showCredentials} onOpenChange={setShowCredentials}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Credenciales del Empleado</DialogTitle>
+          </DialogHeader>
+          {newCredentials && (
+            <div className="space-y-4">
+              <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
+                <p className="text-sm text-green-800 mb-3">
+                  ✅ Empleado creado exitosamente. Comparte estas credenciales con el empleado:
+                </p>
+                
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-xs font-medium text-gray-600">Email:</label>
+                    <div className="flex items-center space-x-2 mt-1">
+                      <code className="flex-1 p-2 bg-gray-100 rounded text-sm">{newCredentials.email}</code>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => copyToClipboard(newCredentials.email, 'email')}
+                      >
+                        {copiedField === 'email' ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                      </Button>
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <label className="text-xs font-medium text-gray-600">Contraseña:</label>
+                    <div className="flex items-center space-x-2 mt-1">
+                      <code className="flex-1 p-2 bg-gray-100 rounded text-sm">{newCredentials.password}</code>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => copyToClipboard(newCredentials.password, 'password')}
+                      >
+                        {copiedField === 'password' ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+                
+                <p className="text-xs text-gray-600 mt-3">
+                  💡 El empleado puede usar estas credenciales para acceder a su panel personal.
+                </p>
+              </div>
+              
+              <Button 
+                onClick={() => {
+                  setShowCredentials(false);
+                  setNewCredentials(null);
+                }}
+                className="w-full"
+              >
+                Entendido
+              </Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Modal de detalles del empleado */}
       <Dialog open={!!selectedEmployee} onOpenChange={() => setSelectedEmployee(null)}>

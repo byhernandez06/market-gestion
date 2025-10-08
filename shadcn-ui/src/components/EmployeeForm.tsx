@@ -9,7 +9,7 @@ import { X } from 'lucide-react';
 
 interface EmployeeFormProps {
   employee?: Employee | null;
-  onSubmit: (employee: Omit<Employee, 'id'>) => void;
+  onSubmit: (employee: Omit<Employee, 'id'>, password?: string) => void;
   onCancel: () => void;
 }
 
@@ -21,7 +21,8 @@ const EmployeeForm: React.FC<EmployeeFormProps> = ({ employee, onSubmit, onCance
     startDate: '',
     hourlyRate: '',
     status: 'activo' as 'activo' | 'inactivo',
-    email: ''
+    email: '',
+    password: ''
   });
 
   useEffect(() => {
@@ -33,7 +34,8 @@ const EmployeeForm: React.FC<EmployeeFormProps> = ({ employee, onSubmit, onCance
         startDate: employee.startDate,
         hourlyRate: employee.hourlyRate.toString(),
         status: employee.status,
-        email: employee.email
+        email: employee.email,
+        password: ''
       });
     } else {
       // Generar color aleatorio para nuevo empleado
@@ -51,6 +53,12 @@ const EmployeeForm: React.FC<EmployeeFormProps> = ({ employee, onSubmit, onCance
       return;
     }
 
+    // Para nuevos empleados, la contraseña es obligatoria
+    if (!employee && !formData.password) {
+      alert('Por favor define una contraseña para el empleado');
+      return;
+    }
+
     onSubmit({
       name: formData.name,
       role: formData.role,
@@ -59,7 +67,7 @@ const EmployeeForm: React.FC<EmployeeFormProps> = ({ employee, onSubmit, onCance
       hourlyRate: parseInt(formData.hourlyRate),
       status: formData.status,
       email: formData.email
-    });
+    }, formData.password || undefined);
   };
 
   const generateRandomColor = () => {
@@ -106,8 +114,26 @@ const EmployeeForm: React.FC<EmployeeFormProps> = ({ employee, onSubmit, onCance
                 onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
                 placeholder="juan@minisuper.com"
                 required
+                disabled={!!employee} // No permitir cambiar email al editar
               />
             </div>
+
+            {!employee && (
+              <div className="space-y-2">
+                <Label htmlFor="password">Contraseña *</Label>
+                <Input
+                  id="password"
+                  type="password"
+                  value={formData.password}
+                  onChange={(e) => setFormData(prev => ({ ...prev, password: e.target.value }))}
+                  placeholder="Contraseña para el empleado"
+                  required
+                />
+                <p className="text-xs text-gray-500">
+                  Esta contraseña será mostrada al empleado para que pueda iniciar sesión
+                </p>
+              </div>
+            )}
 
             <div className="space-y-2">
               <Label htmlFor="role">Rol</Label>

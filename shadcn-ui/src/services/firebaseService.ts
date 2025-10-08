@@ -9,10 +9,83 @@ import {
   where, 
   orderBy,
   onSnapshot,
-  Timestamp 
+  Timestamp,
+  getDoc,
+  setDoc 
 } from 'firebase/firestore';
+import { createUserWithEmailAndPassword, getAuth } from 'firebase/auth';
 import { db } from '@/lib/firebase.js';
-import { Employee, Schedule, Vacation, Extra } from '@/types';
+import { Employee, Schedule, Vacation, Extra, User } from '@/types';
+
+// Auth Service
+export const authService = {
+  // Create employee user account
+  async createEmployeeAccount(email: string, password: string, employeeData: Omit<Employee, 'id'>): Promise<{ uid: string; employeeId: string }> {
+    const auth = getAuth();
+    
+    try {
+      // Create Firebase Auth user
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const uid = userCredential.user.uid;
+      
+      // Create user document in Firestore
+      const userData: User = {
+        id: uid,
+        email: email,
+        role: 'empleado',
+        name: employeeData.name,
+        createdAt: new Date().toISOString()
+      };
+      
+      await setDoc(doc(db, 'users', uid), userData);
+      
+      // Create employee document with reference to user
+      const employeeDocData = {
+        ...employeeData,
+        userId: uid,
+        createdAt: Timestamp.now()
+      };
+      
+      const employeeRef = await addDoc(collection(db, 'employees'), employeeDocData);
+      
+      return { uid, employeeId: employeeRef.id };
+    } catch (error) {
+      console.error('Error creating employee account:', error);
+      throw error;
+    }
+  },
+
+  // Get user by ID
+  async getUserById(uid: string): Promise<User | null> {
+    try {
+      const userDoc = await getDoc(doc(db, 'users', uid));
+      if (userDoc.exists()) {
+        return { id: userDoc.id, ...userDoc.data() } as User;
+      }
+      return null;
+    } catch (error) {
+      console.error('Error getting user:', error);
+      return null;
+    }
+  },
+
+  // Get employee by user ID
+  async getEmployeeByUserId(userId: string): Promise<Employee | null> {
+    try {
+      const q = query(collection(db, 'employees'), where('userId', '==', userId));
+      const querySnapshot = await getDocs(q);
+      
+      if (!querySnapshot.empty) {
+        const doc = querySnapshot.docs[0];
+        return { id: doc.id, ...doc.data() } as Employee;
+      }
+      return null;
+    } catch (error) {
+      console.error('Error getting employee by user ID:', error);
+      return null;
+    }
+  }
+};
 
 // Employees Service
 export const employeesService = {
@@ -25,7 +98,12 @@ export const employeesService = {
     } as Employee));
   },
 
-  // Add new employee
+  // Add new employee with authentication
+  async addWithAuth(employee: Omit<Employee, 'id'>, password: string): Promise<{ employeeId: string; uid: string }> {
+    return await authService.createEmployeeAccount(employee.email, password, employee);
+  },
+
+  // Add new employee (legacy method)
   async add(employee: Omit<Employee, 'id'>): Promise<string> {
     const docRef = await addDoc(collection(db, 'employees'), {
       ...employee,
@@ -73,10 +151,40 @@ export const schedulesService = {
     } as Schedule));
   },
 
+  // Get schedules by employee
+  async getByEmployee(employeeId: string): Promise<Schedule[]> {
+    const q = query(
+      collection(db, 'schedules'),
+      where('employeeId', '==', employeeId),
+      orderBy('date', 'desc')
+    );
+    const querySnapshot = await getDocs(q);
+    return querySnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    } as Schedule));
+  },
+
   // Get schedules by date range
   async getByDateRange(startDate: string, endDate: string): Promise<Schedule[]> {
     const q = query(
       collection(db, 'schedules'),
+      where('date', '>=', startDate),
+      where('date', '<=', endDate),
+      orderBy('date', 'asc')
+    );
+    const querySnapshot = await getDocs(q);
+    return querySnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    } as Schedule));
+  },
+
+  // Get schedules by employee and date range
+  async getByEmployeeAndDateRange(employeeId: string, startDate: string, endDate: string): Promise<Schedule[]> {
+    const q = query(
+      collection(db, 'schedules'),
+      where('employeeId', '==', employeeId),
       where('date', '>=', startDate),
       where('date', '<=', endDate),
       orderBy('date', 'asc')
@@ -233,6 +341,22 @@ export const extrasService = {
     } as Extra));
   },
 
+  // Get extras by employee and date range
+  async getByEmployeeAndDateRange(employeeId: string, startDate: string, endDate: string): Promise<Extra[]> {
+    const q = query(
+      collection(db, 'extras'),
+      where('employeeId', '==', employeeId),
+      where('date', '>=', startDate),
+      where('date', '<=', endDate),
+      orderBy('date', 'desc')
+    );
+    const querySnapshot = await getDocs(q);
+    return querySnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    } as Extra));
+  },
+
   // Add new extra
   async add(extra: Omit<Extra, 'id'>): Promise<string> {
     const docRef = await addDoc(collection(db, 'extras'), {
@@ -314,6 +438,74 @@ export const dashboardService = {
           date: extra.date
         }))
       ].slice(0, 5)
+    };
+  },
+
+  // Get employee dashboard stats
+  async getEmployeeStats(employeeId: string) {
+    const [employee, schedules, vacations, extras] = await Promise.all([
+      employeesService.getAll().then(emps => emps.find(emp => emp.id === employeeId)),
+      schedulesService.getByEmployee(employeeId),
+      vacationsService.getByEmployee(employeeId),
+      extrasService.getByEmployee(employeeId)
+    ]);
+
+    if (!employee) {
+      throw new Error('Employee not found');
+    }
+
+    const currentDate = new Date();
+    const currentMonth = currentDate.getMonth();
+    const currentYear = currentDate.getFullYear();
+    
+    // Get current week (Monday to Sunday)
+    const startOfWeek = new Date(currentDate);
+    startOfWeek.setDate(currentDate.getDate() - currentDate.getDay() + 1);
+    const endOfWeek = new Date(startOfWeek);
+    endOfWeek.setDate(startOfWeek.getDate() + 6);
+
+    // Filter current month and week data
+    const currentMonthSchedules = schedules.filter(schedule => {
+      const scheduleDate = new Date(schedule.date);
+      return scheduleDate.getMonth() === currentMonth && scheduleDate.getFullYear() === currentYear;
+    });
+
+    const currentWeekSchedules = schedules.filter(schedule => {
+      const scheduleDate = new Date(schedule.date);
+      return scheduleDate >= startOfWeek && scheduleDate <= endOfWeek;
+    });
+
+    const currentMonthExtras = extras.filter(extra => {
+      const extraDate = new Date(extra.date);
+      return extraDate.getMonth() === currentMonth && extraDate.getFullYear() === currentYear;
+    });
+
+    const approvedVacations = vacations.filter(vacation => vacation.status === 'aprobada');
+    const pendingVacations = vacations.filter(vacation => vacation.status === 'pendiente');
+
+    // Calculate available vacation days (assuming 15 days per year)
+    const startDate = new Date(employee.startDate);
+    const yearsWorked = Math.floor((currentDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24 * 365));
+    const totalVacationDays = Math.max(yearsWorked * 15, 15); // Minimum 15 days
+    const usedVacationDays = approvedVacations.reduce((sum, vacation) => {
+      const start = new Date(vacation.startDate);
+      const end = new Date(vacation.endDate);
+      const days = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+      return sum + days;
+    }, 0);
+
+    return {
+      employee,
+      totalVacationDays,
+      usedVacationDays,
+      availableVacationDays: totalVacationDays - usedVacationDays,
+      pendingVacations: pendingVacations.length,
+      weeklyHours: currentWeekSchedules.reduce((sum, schedule) => sum + schedule.hours, 0),
+      monthlyHours: currentMonthSchedules.reduce((sum, schedule) => sum + schedule.hours, 0),
+      monthlyExtraHours: currentMonthExtras.reduce((sum, extra) => sum + extra.hours, 0),
+      monthlyExtraAmount: currentMonthExtras.reduce((sum, extra) => sum + extra.amount, 0),
+      recentVacations: vacations.slice(0, 5),
+      recentSchedules: schedules.slice(0, 10)
     };
   }
 };

@@ -4,6 +4,7 @@ export interface User {
   name: string;
   role: 'admin' | 'empleado' | 'refuerzo';
   employeeId?: string;
+  createdAt: string;
 }
 
 export interface Employee {
@@ -22,8 +23,10 @@ export interface Schedule {
   id: string;
   employeeId: string;
   date: string;
-  blocks: ScheduleBlock[];
-  totalHours: number;
+  startTime: string;
+  endTime: string;
+  hours: number;
+  type: 'regular' | 'extra';
 }
 
 export interface ScheduleBlock {
