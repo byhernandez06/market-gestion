@@ -12,20 +12,27 @@ import { useState } from 'react';
 
 const Layout: React.FC = () => {
   const { currentUser } = useAuth();
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [currentPage, setCurrentPage] = useState('dashboard');
 
   if (!currentUser) {
     return <Login />;
   }
 
   const renderContent = () => {
-    // Employee users see their personal dashboard
+    // Employee users can navigate between their allowed pages
     if (currentUser.role === 'empleado' || currentUser.role === 'refuerzo') {
-      return <EmployeeDashboard />;
+      switch (currentPage) {
+        case 'dashboard':
+          return <EmployeeDashboard />;
+        case 'vacations':
+          return <Vacations />;
+        default:
+          return <EmployeeDashboard />;
+      }
     }
 
-    // Admin users see full system based on active tab
-    switch (activeTab) {
+    // Admin users see full system based on current page
+    switch (currentPage) {
       case 'dashboard':
         return <Dashboard />;
       case 'employees':
@@ -43,12 +50,10 @@ const Layout: React.FC = () => {
 
   return (
     <div className="flex h-screen bg-gray-100">
-      {/* Only show sidebar for admin users */}
-      {currentUser.role === 'admin' && (
-        <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />
-      )}
+      {/* Show sidebar for all users */}
+      <Sidebar currentPage={currentPage} onPageChange={setCurrentPage} />
       
-      <main className={`flex-1 overflow-y-auto ${currentUser.role === 'admin' ? '' : 'w-full'}`}>
+      <main className="flex-1 overflow-y-auto">
         {renderContent()}
       </main>
     </div>
